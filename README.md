@@ -16,3 +16,7 @@ When `claude` is not on the `PATH`, the pane runs your shell and shows how to in
 The terminal pane has the full power of your user. It is not a sandbox.
 
 The preview pane runs `main.tcl` of the project and runs it again after each change. dockyard writes `.mcp.json` and `CLAUDE.md` into a project that has none. With them, the agent program starts `dockyard --mcp`, an MCP server with tools that take screenshots of the preview, list its widgets, run Tcl in it, send clicks and keys to it, and give its errors and its output.
+
+## License
+
+dockyard is under the GNU Affero General Public License, version 3 (`LICENSE`), with an output exception (`LICENSE-EXCEPTION.md`). The apps that you make with dockyard are yours: license them under any terms that you choose. The project templates in `src/project/` are under 0BSD.
