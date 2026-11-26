@@ -30,7 +30,7 @@ Three panes, which the user can resize:
 
 ## 4. The live preview
 
-- The preview runs the app in a child interpreter with a sandbox: the capabilities that the app declares, and `ztk::limit` for steps and memory. A half-written app cannot hang dockyard or reach outside its folder.
+- The preview runs the app in a child interpreter with a sandbox: the capabilities that the app declares, and `ztk::limit -compute` and `-memory` for the compute limit and the memory limit. A half-written app cannot hang dockyard or reach outside its folder.
 - A file watcher sees each change that Claude writes. dockyard evaluates the changed files again in the child interpreter, with no restart. Tcl makes this cheap: a `proc` is defined again, and the widgets are built again.
 - Keep the state when it is possible: the preview keeps the values of variables that the app marks as state. A full restart is one key away.
 - An error shows in the preview pane with the file and the line, and goes to Claude too (section 5).
