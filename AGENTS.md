@@ -22,7 +22,8 @@ systemd-run --user --scope -q -p MemoryMax=4G -p MemorySwapMax=0 -- <command>
 |---|---|
 | `zig build` | Builds `zig-out/bin/dockyard`. |
 | `zig build test` | Runs the unit tests and the headless script tests. |
-| `zig-out/bin/dockyard [--headless] [project folder]` | Runs the app. |
+| `zig build test-bin` | Installs the test program as `zig-out/bin/test`, to run it with `timeout`. |
+| `zig-out/bin/dockyard [--headless] [--agent PROGRAM] [project folder]` | Runs the app. |
 
 ## Rules
 

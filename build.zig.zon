@@ -1,0 +1,13 @@
+.{
+    .name = .dockyard,
+    .fingerprint = 0x240b86b880fe647b,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .ztk = .{
+            .url = "git+https://github.com/beetlebugorg/ztk#fbbb2f76c0e9919f34fb024eb8c238baf8df8f8d",
+            .hash = "ztk-0.2.0-beta-pPTF2C7BMAD3DrwcOHxae3RPsnnsNMakYxCXAC7eygzv",
+        },
+    },
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+}
