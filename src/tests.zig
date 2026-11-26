@@ -8,9 +8,11 @@ const std = @import("std");
 const ztcl = @import("ztcl");
 const ztk = @import("ztk");
 const host = @import("host.zig");
+const mcp = @import("mcp.zig");
 
 test {
     _ = host;
+    _ = @import("mcp.zig");
 }
 
 const window_script = @embedFile("dockyard.tcl");
@@ -65,6 +67,22 @@ const Run = struct {
         return r.it.str(v);
     }
 
+    /// Calls the tool `name` of the bridge with the JSON `args`, as
+    /// `dockyard --mcp` does, and gives the JSON-RPC answer. It waits up
+    /// to 5 s for the control socket of the preview child.
+    fn tool(r: *Run, name: []const u8, args: []const u8) ![]const u8 {
+        const a = r.arena.allocator();
+        const folder = std.mem.sliceTo(&r.dir, 0);
+        const sock = try host.controlPath(a, null, folder);
+        const msg = try std.fmt.allocPrint(a, "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{{\"name\":\"{s}\",\"arguments\":{s}}}}}", .{ name, args });
+        var k: usize = 0;
+        while (true) : (k += 1) {
+            const answer = try mcp.handle(a, sock, msg);
+            if (std.mem.indexOf(u8, answer, "The preview is not running") == null or k >= 250) return answer;
+            _ = try r.eval("after 20 {set ::tick 1}; vwait ::tick");
+        }
+    }
+
     /// Runs the loop until the terminal shows `want`, for at most 5 s.
     fn waitFor(r: *Run, want: []const u8) !void {
         return r.waitIn(".term", want);
@@ -97,9 +115,13 @@ fn writeFile(a: std.mem.Allocator, folder: []const u8, name: []const u8, text: [
     if (std.c.write(fd, text.ptr, text.len) != @as(isize, @intCast(text.len))) return error.Unexpected;
 }
 
-/// Removes the files of a test project and the folder. A project has no subfolders.
+/// Removes the files of a test project, its control socket, and the
+/// folder. A project has no subfolders.
 fn removeFolder(a: std.mem.Allocator, folder: []const u8) void {
-    for ([_][]const u8{"main.tcl"}) |name| {
+    if (host.controlPath(a, null, folder)) |sock| {
+        _ = std.c.unlink(sock.ptr);
+    } else |_| {}
+    for ([_][]const u8{ "main.tcl", ".mcp.json", "CLAUDE.md" }) |name| {
         const path = std.fmt.allocPrintSentinel(a, "{s}/{s}", .{ folder, name }, 0) catch return;
         _ = std.c.unlink(path.ptr);
     }
@@ -148,11 +170,10 @@ test "the preview shows an error of main.tcl" {
     try r.start("/bin/sh", "no-such-command 1 2\n");
     defer r.stop();
     try r.waitIn(".preview.log", "invalid command name \"no-such-command\"");
-    var k: usize = 0;
-    while (k < 200 and std.mem.indexOf(u8, try r.eval(".preview.head.state cget -text"), "ended") == null) : (k += 1) {
-        _ = try r.eval("after 10 {set ::tick 1}; vwait ::tick");
-    }
-    try std.testing.expectEqualStrings("Run 1 of main.tcl ended: exit 1", try r.eval(".preview.head.state cget -text"));
+    // The child keeps running, and the bridge gives the error with its trace.
+    try std.testing.expectEqualStrings("Run 1 of main.tcl", try r.eval(".preview.head.state cget -text"));
+    const errors = try r.tool("errors", "{}");
+    try std.testing.expect(std.mem.indexOf(u8, errors, "no-such-command 1 2") != null);
 }
 
 test "a project with no main.tcl gives a note" {
@@ -160,4 +181,116 @@ test "a project with no main.tcl gives a note" {
     try r.start("/bin/sh", null);
     defer r.stop();
     try std.testing.expectEqualStrings("The project has no main.tcl yet.", try r.eval(".preview.head.state cget -text"));
+}
+
+test "the window writes .mcp.json and CLAUDE.md into the project" {
+    var r: Run = .{ .arena = .init(std.testing.allocator) };
+    try r.start("/bin/sh", null);
+    defer r.stop();
+    const json = try r.eval("set f [open /.mcp.json]; set t [read $f]; close $f; set t");
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"args\": [\"--mcp\"]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, try r.eval("file size /CLAUDE.md"), "0") != 0);
+}
+
+test "the bridge drives the preview" {
+    var r: Run = .{ .arena = .init(std.testing.allocator) };
+    try r.start("/bin/sh",
+        \\set ::count 0
+        \\button .b -text "Add one" -command {incr ::count; puts count=$::count}
+        \\entry .e
+        \\pack .b .e -padx 20 -pady 10
+        \\focus .e
+        \\
+    );
+    defer r.stop();
+    const has = struct {
+        fn f(text: []const u8, want: []const u8) !void {
+            if (std.mem.indexOf(u8, text, want) == null) {
+                std.debug.print("no \"{s}\" in {s}\n", .{ want, text });
+                return error.TestExpectedEqual;
+            }
+        }
+    }.f;
+    try has(try r.tool("widgets", "{}"), ".b Button 80 10 78 31 1 text={Add one}");
+    try has(try r.tool("click", "{\"x\":100,\"y\":20}"), "\"text\":\".b\"");
+    try has(try r.tool("eval", "{\"script\":\"set ::count\"}"), "\"text\":\"1\"");
+    try has(try r.tool("log", "{}"), "count=1");
+    try has(try r.tool("type", "{\"text\":\"hi [there]\",\"widget\":\".e\"}"), "\"text\":\".e\"");
+    try has(try r.tool("key", "{\"key\":\"BackSpace\"}"), "\".e\"");
+    try has(try r.tool("eval", "{\"script\":\".e get\"}"), "\"text\":\"hi [there\"");
+    try has(try r.tool("eval", "{\"script\":\"error inner\"}"), "\"isError\":true");
+    try has(try r.tool("screenshot", "{\"widget\":\".b\"}"), "\"type\":\"image\",\"data\":\"iVBORw0KGgo");
+    try has(try r.tool("errors", "{}"), "(no errors)");
+    // The preview child has the host clock.
+    try has(try r.tool("eval", "{\"script\":\"clock format 0 -format %Y -gmt 1\"}"), "\"text\":\"1970\"");
+    // The restart tool ends the child with status 75, and the window starts a new run.
+    try has(try r.tool("restart", "{}"), "(empty result)");
+    var k: usize = 0;
+    while (k < 250 and std.mem.indexOf(u8, try r.eval(".preview.head.state cget -text"), "Run 2") == null) : (k += 1) {
+        _ = try r.eval("after 20 {set ::tick 1}; vwait ::tick");
+    }
+    try std.testing.expectEqualStrings("Run 2 of main.tcl", try r.eval(".preview.head.state cget -text"));
+}
+
+extern "c" fn execve(path: [*:0]const u8, argv: [*:null]const ?[*:0]const u8, envp: [*:null]const ?[*:0]const u8) c_int;
+
+test "dockyard --mcp answers a client on stdin and stdout" {
+    var r: Run = .{ .arena = .init(std.testing.allocator) };
+    try r.start("/bin/sh", "label .l -text ready; pack .l\n");
+    defer r.stop();
+    // The preview child is up when a tool call gets its answer.
+    _ = try r.tool("log", "{}");
+    const a = r.arena.allocator();
+    const exe = std.c.getenv("DOCKYARD_EXE") orelse return error.SkipZigTest;
+    const folder = try a.dupeZ(u8, std.mem.sliceTo(&r.dir, 0));
+    var to_child: [2]c_int = undefined;
+    var from_child: [2]c_int = undefined;
+    if (std.c.pipe(&to_child) != 0 or std.c.pipe(&from_child) != 0) return error.Unexpected;
+    const pid = std.c.fork();
+    if (pid == 0) {
+        _ = std.c.dup2(to_child[0], 0);
+        _ = std.c.dup2(from_child[1], 1);
+        for ([_]c_int{ to_child[0], to_child[1], from_child[0], from_child[1] }) |fd| _ = std.c.close(fd);
+        const argv = [_:null]?[*:0]const u8{ exe, "--mcp", folder.ptr };
+        const envp = [_:null]?[*:0]const u8{"PATH=/usr/bin:/bin"};
+        _ = execve(exe, &argv, &envp);
+        std.c._exit(127);
+    }
+    _ = std.c.close(to_child[0]);
+    _ = std.c.close(from_child[1]);
+    defer {
+        _ = std.c.kill(pid, std.c.SIG.TERM);
+        var status: c_int = 0;
+        _ = std.c.waitpid(pid, &status, 0);
+        _ = std.c.close(from_child[0]);
+    }
+    const input =
+        \\{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"fake","version":"1"}}}
+        \\{"jsonrpc":"2.0","method":"notifications/initialized"}
+        \\{"jsonrpc":"2.0","id":2,"method":"tools/list"}
+        \\{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"eval","arguments":{"script":"winfo class .l"}}}
+        \\not json
+        \\
+    ;
+    if (std.c.write(to_child[1], input.ptr, input.len) != input.len) return error.Unexpected;
+    _ = std.c.close(to_child[1]);
+    var out: std.ArrayList(u8) = .empty;
+    var buf: [4096]u8 = undefined;
+    while (true) {
+        const n = std.c.read(from_child[0], &buf, buf.len);
+        if (n <= 0) break;
+        try out.appendSlice(a, buf[0..@intCast(n)]);
+    }
+    var lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, out.items, "\n"), '\n');
+    var ids: std.ArrayList(i64) = .empty;
+    var label_class = false;
+    while (lines.next()) |line| {
+        const v = try std.json.parseFromSliceLeaky(std.json.Value, a, line, .{});
+        const id = v.object.get("id").?;
+        try ids.append(a, if (id == .integer) id.integer else -1);
+        if (std.mem.indexOf(u8, line, "\"text\":\"Label\"") != null) label_class = true;
+    }
+    // The notification has no answer, and the bad line gets a parse error with a null id.
+    try std.testing.expectEqualSlices(i64, &.{ 1, 2, 3, -1 }, ids.items);
+    try std.testing.expect(label_class);
 }

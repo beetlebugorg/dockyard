@@ -14,3 +14,5 @@ zig-out/bin/dockyard ~/dockyard/my-app
 When `claude` is not on the `PATH`, the pane runs your shell and shows how to install it. `--agent PROGRAM` runs another program in the pane.
 
 The terminal pane has the full power of your user. It is not a sandbox.
+
+The preview pane runs `main.tcl` of the project and runs it again after each change. dockyard writes `.mcp.json` and `CLAUDE.md` into a project that has none. With them, the agent program starts `dockyard --mcp`, an MCP server with tools that take screenshots of the preview, list its widgets, run Tcl in it, send clicks and keys to it, and give its errors and its output.

@@ -97,10 +97,15 @@ proc ::dockyard::preview::restart {} {
     state "Run $run of main.tcl"
 }
 
-# The child of run `n` ended. An older run is ignored.
+# The child of run `n` ended. An older run is ignored. Status 75 is the
+# `restart` tool of the MCP bridge, and starts a new run.
 proc ::dockyard::preview::ended {n status} {
     variable run
     if {$n != $run} return
+    if {$status eq "exit 75"} {
+        after 0 ::dockyard::preview::restart
+        return
+    }
     state "Run $run of main.tcl ended: $status"
 }
 
@@ -130,6 +135,24 @@ proc ::dockyard::preview::begin {} {
     after 100 ::dockyard::preview::poll
 }
 
+# The files that connect the agent program to the MCP bridge: .mcp.json
+# runs `dockyard --mcp` in the project folder, and CLAUDE.md teaches ztk
+# and the tools. A file that exists stays as it is.
+proc ::dockyard::bridgeFiles {} {
+    if {![file exists /.mcp.json]} {
+        set exe [string map {\\ \\\\ \" \\\"} $::dockyard::runner]
+        set f [open /.mcp.json w]
+        puts $f "\{\"mcpServers\": \{\"dockyard\": \{\"type\": \"stdio\", \"command\": \"$exe\", \"args\": \[\"--mcp\"\]\}\}\}"
+        close $f
+    }
+    if {![file exists /CLAUDE.md]} {
+        set f [open /CLAUDE.md w]
+        puts -nonewline $f $::dockyard::claude_md
+        close $f
+    }
+}
+
+::dockyard::bridgeFiles
 ::dockyard::start
 ::dockyard::preview::begin
 focus .term
