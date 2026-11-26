@@ -14,7 +14,7 @@ This page has the state of each step of the build order (section 9 of `spec.md`)
 | Live preview, pane form | ztk, dockyard | Next. It needs ztk embedding (spec section 8, ztk item 5), the sandbox of the project, and a reload with no restart. |
 | Live preview, pane form: plan | ztk | ztk PR 95: `docs/dev/embed.md` (`ztk::embed`, an embed backend, a shared atlas, the copy of the child scene). |
 | MCP bridge: ztk parts | ztk | ztk PR 96: `ztk::snapshot` (base64 PNG of a widget, drawn with the CPU renderer) and `ztk::tree` (the widgets with their geometry). Event injection is `event generate`; check pointer events end to end. dockyard uses ztk 4d53bc0. |
-| MCP bridge: events | ztk | ztk PR 97: `ztk::inject`. `event generate` leaves the hover flag of the dispatcher clear, so a generated press and release did not invoke a button. `ztk::inject` gives backend events to `App.handleEvent`. |
+| MCP bridge: events | ztk | ztk PR 97: `ztk::inject`. `event generate` leaves the hover flag of the dispatcher clear, so a generated press and release did not invoke a button. `ztk::inject` gives backend events to `App.handleEvent`. dockyard uses ztk 4695cb7. |
 | MCP bridge: server | dockyard | Done (dockyard PR 6): `src/mcp.zig` (`dockyard --mcp`, JSON-RPC over stdio), `src/control.zig` (the control socket of the preview child), `src/bridge.tcl` (the tools in Tcl), `src/project/CLAUDE.md` (the template), and `.mcp.json`. |
 | Build button | dockyard | Not started. |
 | App list and history | dockyard | Not started. |
