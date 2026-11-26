@@ -10,8 +10,9 @@ This page has the state of each step of the build order (section 9 of `spec.md`)
 | App window with the terminal pane | dockyard | Done: `src/main.zig`, `src/host.zig`, `src/dockyard.tcl`. The pane runs `claude` or the shell, and Return starts it again after it ends. |
 | File watcher | ztcl | Merged: ztcl PR 120 (plan) and PR 121 (`ztcl::watch` on Linux). |
 | CI | dockyard | Done: `.github/workflows/ci.yml` (dockyard PR 3). Each change to main goes in a PR. |
-| Live preview, first form | ztk, dockyard | Done: ztk PR 93 (ztcl with `ztcl::watch`). The preview pane runs `dockyard --run main.tcl` on a PTY, shows its output, and starts it again 150 ms after the last change outside `.git`. On Wayland the app opens its own window. |
-| Live preview, pane form | ztk, dockyard | Next. It needs ztk embedding (spec section 8, ztk item 5), the sandbox of the project, and a reload with no restart. |
+| Live preview, first form | ztk, dockyard | Done: ztk PR 93 (ztcl with `ztcl::watch`). The preview pane runs `dockyard --run main.tcl` on a PTY, shows its output, and starts it again 150 ms after the last change outside `.git`. |
+| Live preview, pane form (image) | dockyard | Done (dockyard PR 7). The child runs on the headless backend. Every 33 ms the window asks the child for its count of frames over the control socket, and reads `ztk::snapshot .` when the count changes. The child gets the size of the pane with `wm geometry`. The input of the pane goes to the child with `ztk::inject`. This form works on each platform with a headless backend. |
+| Live preview, pane form (`ztk::embed`) | ztk, dockyard | Not started. The in-process form of ztk `docs/dev/embed.md`, for a reload with no restart and a draw with no image copy. |
 | Live preview, pane form: plan | ztk | ztk PR 95: `docs/dev/embed.md` (`ztk::embed`, an embed backend, a shared atlas, the copy of the child scene). |
 | MCP bridge: ztk parts | ztk | ztk PR 96: `ztk::snapshot` (base64 PNG of a widget, drawn with the CPU renderer) and `ztk::tree` (the widgets with their geometry). Event injection is `event generate`; check pointer events end to end. dockyard uses ztk 4d53bc0. |
 | MCP bridge: events | ztk | ztk PR 97: `ztk::inject`. `event generate` leaves the hover flag of the dispatcher clear, so a generated press and release did not invoke a button. `ztk::inject` gives backend events to `App.handleEvent`. dockyard uses ztk 4695cb7. |
@@ -21,8 +22,8 @@ This page has the state of each step of the build order (section 9 of `spec.md`)
 
 ## Next steps
 
-1. `ztk::embed` from ztk `docs/dev/embed.md`, so the preview draws inside the pane on each platform. Reload the changed files in the child with no restart where possible.
-2. The Build button and the app list (spec sections 6 and 7).
+1. The Build button and the app list (spec sections 6 and 7).
+2. `ztk::embed` from ztk `docs/dev/embed.md`. PR 1 of that plan shares the fonts and the atlas of the parent App. `App.fonts` and `App.atlas` are values, with 40 uses in 13 files, and 5 of the files are backends of the macOS and Windows work (`grep -rn "app\.atlas\b\|\.atlas\.\|app\.fonts\b\|\.fonts\." src`). Agree on the change with the owners of those files first.
 
 ## Notes
 
@@ -30,6 +31,7 @@ This page has the state of each step of the build order (section 9 of `spec.md`)
 - The `restart` tool ends the child with status 75, and the window script starts a new run.
 - After an error in main.tcl, the child keeps running, so the `errors` tool can give the trace.
 - dockyard writes `.mcp.json` and `CLAUDE.md` into a project that has none. `.mcp.json` has the full path of the dockyard program. The agent program asks the user to approve a server of a project file before it uses it (not checked here: the tests never run the agent program).
+- The cost of the image pane, measured with a ReleaseFast build and `time` in the child: `ztk::snapshot .` of an 800x600 window with 20 buttons is 8.3 ms, and `image create photo -data` of the result is 2.9 ms. A Debug build gives 135 ms for the snapshot.
 - A click on a ztk button gives it the focus. The `type` and `key` tools take a `widget` argument for this reason.
 - Open bug: a run of `dockyard --headless --exit-after-frames 3` did not end on the GitHub runner (60 s limit) and ends in 0.2 s locally. The cause is not known. CI runs only the build and the tests. If the bug occurs with ztk alone, file it as a ztk issue.
 

@@ -12,11 +12,15 @@
 //! The output of the script and the background errors go to the pane
 //! as before, and also to two buffers. `::dockyard::bridge::log` and
 //! `::dockyard::bridge::errors` give the text of a buffer since the last
-//! call and clear it. `::dockyard::bridge::restart` ends the child with
+//! call and clear it. `::dockyard::bridge::frames` gives the count of
+//! drawn frames. `::dockyard::bridge::restart` ends the child with
 //! status 75 after the answer, and the window script starts it again.
 //!
 //! The socket file has mode 0600. A request can do what the preview
 //! script can do, with the same capabilities.
+//!
+//! `call` is the client side: the MCP server and the preview pane of
+//! the window use it.
 
 const std = @import("std");
 const ztcl = @import("ztcl");
@@ -88,6 +92,7 @@ pub fn start(gpa: std.mem.Allocator, app: *ztk.App, path: [:0]const u8, err: ztc
     try it.register("dockyard::bridge::log", cmdLog);
     try it.register("dockyard::bridge::errors", cmdErrors);
     try it.register("dockyard::bridge::restart", cmdRestart);
+    try it.register("dockyard::bridge::frames", cmdFrames);
     _ = try it.eval(bridge_script);
     _ = try app.loop.addNative(poll_us, tick, c);
     return c;
@@ -206,6 +211,43 @@ fn writeAll(fd: c_int, bytes: []const u8) void {
     }
 }
 
+pub const Reply = struct { ok: bool, result: []const u8 = "", @"error": []const u8 = "", info: []const u8 = "" };
+
+/// Sends `script` to the control socket at `path` and reads the answer.
+/// The read ends after `timeout_ms` with no data, for example when a
+/// script of the child runs a loop that does not end.
+pub fn call(a: std.mem.Allocator, path: [:0]const u8, script: []const u8, timeout_ms: u32) !Reply {
+    var addr: std.c.sockaddr.un = .{ .path = undefined };
+    if (path.len >= addr.path.len) return error.NameTooLong;
+    @memset(&addr.path, 0);
+    @memcpy(addr.path[0..path.len], path);
+    const fd = std.c.socket(std.c.AF.UNIX, std.c.SOCK.STREAM | std.c.SOCK.CLOEXEC, 0);
+    if (fd < 0) return error.SystemResources;
+    defer _ = std.c.close(fd);
+    if (std.c.connect(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.un)) != 0) return error.ConnectionRefused;
+    var req: std.Io.Writer.Allocating = .init(a);
+    try std.json.Stringify.value(.{ .tcl = script }, .{}, &req.writer);
+    try req.writer.writeByte('\n');
+    var rest = req.written();
+    while (rest.len > 0) {
+        const n = std.c.write(fd, rest.ptr, rest.len);
+        if (n <= 0) return error.BrokenPipe;
+        rest = rest[@intCast(n)..];
+    }
+    const tv: std.c.timeval = .{ .sec = @intCast(timeout_ms / 1000), .usec = @intCast((timeout_ms % 1000) * 1000) };
+    _ = std.c.setsockopt(fd, std.c.SOL.SOCKET, std.c.SO.RCVTIMEO, std.mem.asBytes(&tv), @sizeOf(std.c.timeval));
+    var answer: std.ArrayList(u8) = .empty;
+    var buf: [1 << 16]u8 = undefined;
+    while (true) {
+        const n = std.c.read(fd, &buf, buf.len);
+        if (n < 0) return error.Timeout;
+        if (n == 0) break;
+        try answer.appendSlice(a, buf[0..@intCast(n)]);
+    }
+    if (answer.items.len == 0) return error.NoAnswer;
+    return std.json.parseFromSliceLeaky(Reply, a, answer.items, .{ .ignore_unknown_fields = true });
+}
+
 fn takeBuffer(it: *ztcl.Interp, buf: *std.ArrayList(u8)) ztcl.Error!ztcl.Value {
     const text = try it.alloc().dupe(u8, buf.items);
     buf.clearRetainingCapacity();
@@ -229,4 +271,11 @@ fn cmdRestart(it: *ztcl.Interp, argv: []const ztcl.Value, _: ?*ztcl.interp.Cmd) 
     if (argv.len != 1) return it.wrongArgs("::dockyard::bridge::restart");
     current.?.restart = true;
     return ztcl.Value.empty;
+}
+
+/// `::dockyard::bridge::frames`: the count of frames that the App drew.
+/// The pane of the window reads a new image when the count changes.
+fn cmdFrames(it: *ztcl.Interp, argv: []const ztcl.Value, _: ?*ztcl.interp.Cmd) ztcl.Error!ztcl.Value {
+    if (argv.len != 1) return it.wrongArgs("::dockyard::bridge::frames");
+    return .{ .int = @intCast(current.?.app.frames) };
 }

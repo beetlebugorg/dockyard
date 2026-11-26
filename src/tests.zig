@@ -294,3 +294,30 @@ test "dockyard --mcp answers a client on stdin and stdout" {
     try std.testing.expectEqualSlices(i64, &.{ 1, 2, 3, -1 }, ids.items);
     try std.testing.expect(label_class);
 }
+
+test "the pane shows the image of the preview and sends the input to it" {
+    var r: Run = .{ .arena = .init(std.testing.allocator) };
+    try r.start("/bin/sh",
+        \\set ::count 0
+        \\button .b -text add -command {incr ::count}
+        \\place .b -x 0 -y 0 -width 100 -height 40
+        \\entry .e
+        \\place .e -x 0 -y 60 -width 200
+        \\
+    );
+    defer r.stop();
+    _ = try r.tool("log", "{}");
+    // The child gets the size of the pane, and the pane gets its image.
+    const want = try r.eval("list [winfo width .preview.box] [winfo height .preview.box]");
+    var k: usize = 0;
+    while (k < 250) : (k += 1) {
+        _ = try r.eval("after 20 {set ::tick 1}; vwait ::tick");
+        const got = try r.eval("if {[lsearch [image names] ::dockyard::preview::shot] < 0} {list} else {list [image width ::dockyard::preview::shot] [image height ::dockyard::preview::shot]}");
+        if (std.mem.eql(u8, got, want)) break;
+    }
+    try std.testing.expectEqualStrings(want, try r.eval("list [image width ::dockyard::preview::shot] [image height ::dockyard::preview::shot]"));
+    _ = try r.eval("event generate .preview.box.img <Motion> -x 20 -y 20; event generate .preview.box.img <ButtonPress-1> -x 20 -y 20; event generate .preview.box.img <ButtonRelease-1> -x 20 -y 20");
+    try std.testing.expectEqualStrings("1", try r.eval("::dockyard::preview::call {set ::count}"));
+    _ = try r.eval("::dockyard::preview::call {focus .e}; event generate .preview.box.img <KeyPress> -keysym h; event generate .preview.box.img <KeyPress> -keysym i");
+    try std.testing.expectEqualStrings("hi", try r.eval("::dockyard::preview::call {.e get}"));
+}

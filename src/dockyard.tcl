@@ -1,8 +1,10 @@
 # The window of dockyard. The terminal pane on the left runs the agent
 # program in the folder of the project. The preview pane on the right
 # runs main.tcl of the project in a child process (`dockyard --run`),
-# and starts it again after each change in the project folder. The root
-# folder of `file` is the project folder, so `-cwd /` is the project.
+# and starts it again after each change in the project folder. The pane
+# shows the image of the child, and sends the input of the pane to it.
+# The root folder of `file` is the project folder, so `-cwd /` is the
+# project.
 
 namespace eval ::dockyard {}
 
@@ -23,9 +25,16 @@ label .preview.head.state -text ""
 button .preview.head.restart -text "Restart" -command ::dockyard::preview::restart
 pack .preview.head.restart -side right
 pack .preview.head.state -side left
-ztk::terminal .preview.log -width 60 -height 12 -cwd /
+# The image of the preview child fills .preview.box. The box keeps its
+# size from the grid, so the size of the image does not change it.
+frame .preview.box -width 480 -height 480
+pack propagate .preview.box 0
+label .preview.box.img -anchor nw -borderwidth 0 -padx 0 -pady 0
+place .preview.box.img -x 0 -y 0 -relwidth 1 -relheight 1
+ztk::terminal .preview.log -width 60 -height 8 -cwd /
 pack .preview.head -fill x -pady {0 6}
-pack .preview.log -fill both -expand 1
+pack .preview.log -side bottom -fill x -pady {6 0}
+pack .preview.box -fill both -expand 1
 
 grid .bar -row 0 -column 0 -columnspan 2 -sticky ew
 grid .term -row 1 -column 0 -sticky nsew
@@ -68,11 +77,15 @@ proc ::dockyard::restartKey {data} {
     start
 }
 
-# The live preview. The child process runs main.tcl, and its output
-# shows in .preview.log. A timer reads the changes of the file watcher.
+# The live preview. The child process runs main.tcl on the headless
+# backend, and its output shows in .preview.log. A timer reads the
+# changes of the file watcher.
 # A change outside .git starts the child again after 150 ms with no
 # other change.
 namespace eval ::dockyard::preview {
+    variable frames -1
+    variable size ""
+    variable sent ""
     variable run 0
     variable pending ""
     variable watch ""
@@ -91,8 +104,9 @@ proc ::dockyard::preview::restart {} {
         state "The project has no main.tcl yet."
         return
     }
-    set cmd [list $::dockyard::runner --run [file join $::dockyard::project main.tcl]]
-    if {$::dockyard::headless} {lappend cmd --headless}
+    variable frames -1
+    variable sent ""
+    set cmd [list $::dockyard::runner --run [file join $::dockyard::project main.tcl] --headless]
     .preview.log configure -exitcommand [list ::dockyard::preview::ended $run] -command $cmd
     state "Run $run of main.tcl"
 }
@@ -152,7 +166,47 @@ proc ::dockyard::bridgeFiles {} {
     }
 }
 
+# The pane. A timer asks the child for its count of frames over the
+# control socket, and reads a new image (`ztk::snapshot .`) when the
+# count changes. The child gets the size of the pane as the geometry of
+# its ".". A child that does not answer gets a new try after 500 ms.
+proc ::dockyard::preview::show {} {
+    variable frames
+    variable size
+    variable sent
+    set delay 33
+    if {[catch {
+        if {$size ne "" && $size ne $sent} {
+            call [list wm geometry . $size]
+            set sent $size
+        }
+        set n [call ::dockyard::bridge::frames]
+        if {$n != $frames} {
+            image create photo ::dockyard::preview::shot -data [call {ztk::snapshot .} 2000]
+            .preview.box.img configure -image ::dockyard::preview::shot
+            set frames $n
+        }
+    }]} {
+        set delay 500
+    }
+    after $delay ::dockyard::preview::show
+}
+
+# Sends one input event of the pane to the child (`ztk::inject`).
+proc ::dockyard::preview::send {args} {
+    catch {call [list ztk::inject . {*}$args]}
+}
+
+bind .preview.box <Configure> {set ::dockyard::preview::size %wx%h}
+bind .preview.box.img <Motion> {::dockyard::preview::send motion %x %y}
+bind .preview.box.img <ButtonPress> {focus %W; ::dockyard::preview::send press %b %x %y}
+bind .preview.box.img <ButtonRelease> {::dockyard::preview::send release %b %x %y}
+bind .preview.box.img <MouseWheel> {::dockyard::preview::send wheel %x %y %D}
+bind .preview.box.img <KeyPress> {::dockyard::preview::send key %K press -state %s}
+bind .preview.box.img <KeyRelease> {::dockyard::preview::send key %K release -state %s}
+
 ::dockyard::bridgeFiles
 ::dockyard::start
 ::dockyard::preview::begin
+::dockyard::preview::show
 focus .term
