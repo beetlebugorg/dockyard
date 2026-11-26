@@ -8,3 +8,5 @@ dockyard builds with Zig 0.17.0 and with the ztk and ztcl commits that build wit
 - `Allocator.dupeZ(u8, s)` is `dupeSentinel(u8, s, 0)`.
 
 On 2026-11-26, `zig build test` passed 14 of 14 tests on an x86_64 Linux machine.
+
+On 2026-11-26, dockyard moved to ztk 3ae208e (ztk main), which pins ztcl 821a3a7. `zig build` and `zig build test` passed on an x86_64 Linux machine.
