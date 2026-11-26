@@ -22,18 +22,21 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);
-    if (b.args) |args| run.addArgs(args);
+    run.addPassthruArgs();
     b.step("run", "Run dockyard").dependOn(&run.step);
 
-    const tests = b.addTest(.{ .root_module = b.createModule(.{
+    const test_module = b.createModule(.{
         .root_source_file = b.path("src/tests.zig"),
         .target = target,
         .optimize = optimize,
         .imports = imports,
-    }), .use_llvm = true, .use_lld = use_lld });
-    // The preview test runs the installed dockyard program as the child.
+    });
+    // The preview test runs the dockyard program of this build as the child.
+    const test_opts = b.addOptions();
+    test_opts.addOptionPath("dockyard_exe", exe.getEmittedBin());
+    test_module.addOptions("test_options", test_opts);
+    const tests = b.addTest(.{ .root_module = test_module, .use_llvm = true, .use_lld = use_lld });
     const run_tests = b.addRunArtifact(tests);
-    run_tests.setEnvironmentVariable("DOCKYARD_EXE", b.getInstallPath(.bin, "dockyard"));
     run_tests.step.dependOn(b.getInstallStep());
     b.step("test", "Run the tests").dependOn(&run_tests.step);
     b.step("test-bin", "Install the test program as zig-out/bin/test").dependOn(&b.addInstallArtifact(tests, .{}).step);

@@ -14,7 +14,7 @@ The CPU limit of ztcl is the compute limit, and it counts compute units. Use the
 
 ## Commands
 
-Use Zig 0.16.0. Run each build, test, and run command under a memory cap:
+Use Zig 0.17.0. Run each build, test, and run command under a memory cap:
 
 ```sh
 systemd-run --user --scope -q -p MemoryMax=4G -p MemorySwapMax=0 -- <command>
