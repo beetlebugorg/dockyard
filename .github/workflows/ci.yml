@@ -1,0 +1,43 @@
+name: CI
+
+# Builds dockyard and runs its tests on Linux for each push to main and
+# each pull request. The tests open the window on the headless backend,
+# with /bin/sh as the agent program.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ZIG_VERSION: "0.16.0"
+
+jobs:
+  test:
+    name: Test (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      # The ztk build compiles shaders with glslc and links Wayland.
+      - name: Install the Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y glslc libwayland-dev libxkbcommon-dev wayland-protocols
+      - name: Build
+        run: |
+          ulimit -v 6000000
+          zig build
+      - name: Test
+        run: |
+          ulimit -v 6000000
+          zig build test
