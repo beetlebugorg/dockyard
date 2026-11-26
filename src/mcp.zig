@@ -15,7 +15,7 @@
 
 const std = @import("std");
 const Io = std.Io;
-const host = @import("host.zig");
+const control = @import("control.zig");
 
 const server_name = "dockyard";
 const default_version = "2025-06-18";
@@ -104,7 +104,7 @@ pub fn handle(a: std.mem.Allocator, socket_path: [:0]const u8, line: []const u8)
             error.BadArgument => return success(a, id, textResult(try std.fmt.allocPrint(a, "bad arguments for {s}: see the input schema", .{name}), true)),
             else => return e,
         };
-        const reply = call(a, socket_path, script) catch |e| return success(a, id, textResult(try std.fmt.allocPrint(
+        const reply = control.call(a, socket_path, script, 30_000) catch |e| return success(a, id, textResult(try std.fmt.allocPrint(
             a,
             "The preview is not running ({s}). Open this folder in dockyard, and check that main.tcl exists.",
             .{@errorName(e)},
@@ -217,43 +217,6 @@ pub fn toolScript(a: std.mem.Allocator, name: []const u8, args: std.json.Value) 
         try s.appendSlice(a, "::dockyard::bridge::restart");
     } else return error.UnknownTool;
     return s.items;
-}
-
-const Reply = struct { ok: bool, result: []const u8 = "", @"error": []const u8 = "", info: []const u8 = "" };
-
-/// Sends `script` to the control socket at `path` and reads the answer.
-fn call(a: std.mem.Allocator, path: [:0]const u8, script: []const u8) !Reply {
-    var addr: std.c.sockaddr.un = .{ .path = undefined };
-    if (path.len >= addr.path.len) return error.NameTooLong;
-    @memset(&addr.path, 0);
-    @memcpy(addr.path[0..path.len], path);
-    const fd = std.c.socket(std.c.AF.UNIX, std.c.SOCK.STREAM | std.c.SOCK.CLOEXEC, 0);
-    if (fd < 0) return error.SystemResources;
-    defer _ = std.c.close(fd);
-    if (std.c.connect(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.un)) != 0) return error.ConnectionRefused;
-    var req: Io.Writer.Allocating = .init(a);
-    try std.json.Stringify.value(.{ .tcl = script }, .{}, &req.writer);
-    try req.writer.writeByte('\n');
-    var rest = req.written();
-    while (rest.len > 0) {
-        const n = std.c.write(fd, rest.ptr, rest.len);
-        if (n <= 0) return error.BrokenPipe;
-        rest = rest[@intCast(n)..];
-    }
-    // A request that never ends the loop of the child, such as `vwait`
-    // of a variable that no script sets, ends here after 30 s.
-    const tv: std.c.timeval = .{ .sec = 30, .usec = 0 };
-    _ = std.c.setsockopt(fd, std.c.SOL.SOCKET, std.c.SO.RCVTIMEO, std.mem.asBytes(&tv), @sizeOf(std.c.timeval));
-    var answer: std.ArrayList(u8) = .empty;
-    var buf: [1 << 16]u8 = undefined;
-    while (true) {
-        const n = std.c.read(fd, &buf, buf.len);
-        if (n < 0) return error.Timeout;
-        if (n == 0) break;
-        try answer.appendSlice(a, buf[0..@intCast(n)]);
-    }
-    if (answer.items.len == 0) return error.NoAnswer;
-    return std.json.parseFromSliceLeaky(Reply, a, answer.items, .{ .ignore_unknown_fields = true });
 }
 
 test "a tool word keeps its special characters" {

@@ -19,6 +19,7 @@
 
 const std = @import("std");
 const ztcl = @import("ztcl");
+const control = @import("control.zig");
 
 /// The CLAUDE.md that dockyard writes into a project that has none.
 pub const claude_md = @embedFile("project/CLAUDE.md");
@@ -81,6 +82,14 @@ pub fn allow(it: *ztcl.Interp, project: []const u8, env: []const [:0]const u8) !
     it.clock_host = clock_host;
     it.exec_host = .{ .allow = null, .timeout_ms = 0, .env = env };
     try it.register("::dockyard::findProgram", cmdFindProgram);
+    // The preview child gets the same environment, so the same socket path.
+    var runtime: ?[]const u8 = null;
+    for (env) |e| if (std.mem.startsWith(u8, e, "XDG_RUNTIME_DIR=")) {
+        runtime = e["XDG_RUNTIME_DIR=".len..];
+    };
+    var fba = std.heap.FixedBufferAllocator.init(&preview_path_buf);
+    preview_path = try controlPath(fba.allocator(), runtime, project);
+    try it.register("dockyard::preview::call", cmdPreviewCall);
 }
 
 /// Turns on the capabilities of the preview child: `file`, `channels`,
@@ -117,6 +126,22 @@ fn clockZone(_: ?*anyopaque, name: []const u8, a: std.mem.Allocator) ?[]const u8
         out.appendSlice(a, buf[0..@intCast(n)]) catch return null;
     }
     return out.items;
+}
+
+var preview_path_buf: [512]u8 = undefined;
+var preview_path: [:0]const u8 = "";
+
+/// `::dockyard::preview::call script ?timeout_ms?`: runs the script in
+/// the preview child over its control socket and gives the result. The
+/// default timeout is 250 ms, so a child in a long loop stops the
+/// window for at most that time.
+fn cmdPreviewCall(it: *ztcl.Interp, argv: []const ztcl.Value, _: ?*ztcl.interp.Cmd) ztcl.Error!ztcl.Value {
+    if (argv.len != 2 and argv.len != 3) return it.wrongArgs("::dockyard::preview::call script ?timeout_ms?");
+    const timeout: u32 = if (argv.len == 3) @intCast(std.math.clamp(try it.int(argv[2]), 1, 60_000)) else 250;
+    const a = it.alloc();
+    const reply = control.call(a, preview_path, try it.str(argv[1]), timeout) catch |e| return it.fail("no preview: {s}", .{@errorName(e)});
+    if (!reply.ok) return it.fail("{s}", .{reply.@"error"});
+    return .{ .str = reply.result };
 }
 
 /// `::dockyard::findProgram name path`: the full path of the program,
