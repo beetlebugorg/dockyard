@@ -31,6 +31,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = imports,
     }), .use_llvm = true, .use_lld = use_lld });
-    b.step("test", "Run the tests").dependOn(&b.addRunArtifact(tests).step);
+    // The preview test runs the installed dockyard program as the child.
+    const run_tests = b.addRunArtifact(tests);
+    run_tests.setEnvironmentVariable("DOCKYARD_EXE", b.getInstallPath(.bin, "dockyard"));
+    run_tests.step.dependOn(b.getInstallStep());
+    b.step("test", "Run the tests").dependOn(&run_tests.step);
     b.step("test-bin", "Install the test program as zig-out/bin/test").dependOn(&b.addInstallArtifact(tests, .{}).step);
 }
