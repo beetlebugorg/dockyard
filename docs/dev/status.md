@@ -23,7 +23,7 @@ This page has the state of each step of the build order (section 9 of `spec.md`)
 ## Next steps
 
 1. The Build button and the app list (spec sections 6 and 7).
-2. `ztk::embed` from ztk `docs/dev/embed.md`. PR 1 of that plan shares the fonts and the atlas of the parent App. `App.fonts` and `App.atlas` are values, with 40 uses in 13 files, and 5 of the files are backends of the macOS and Windows work (`grep -rn "app\.atlas\b\|\.atlas\.\|app\.fonts\b\|\.fonts\." src`). Agree on the change with the owners of those files first.
+2. `ztk::embed` from ztk `docs/dev/embed.md`. PR 1 of that plan shares the fonts and the atlas of the parent App. `App.fonts` and `App.atlas` are values, with 40 uses in 13 files, and 3 of the files (`appkit.zig`, `windows.zig`, `d3d12.zig`) are in the macOS and Windows work (`grep -rn "app\.atlas\b\|\.atlas\.\|app\.fonts\b\|\.fonts\." src`). Agree on the change with the owners of those files first.
 
 ## Notes
 
