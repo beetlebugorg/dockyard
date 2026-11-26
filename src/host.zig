@@ -4,8 +4,12 @@
 //! dockyard turns on `exec`, `channels`, and `file`. The root folder of
 //! `file` is the project folder, so `/` in a script is the project. The
 //! terminal pane runs a program with the full power of the user, and
-//! `exec` is not a sandbox. The preview of a project gets its own child
-//! interpreter with fewer capabilities (step 2 of the spec).
+//! `exec` is not a sandbox.
+//!
+//! The preview child (`dockyard --run FILE`) turns on `file`,
+//! `channels` (for `source`), and `clock`, with the folder of FILE as
+//! the root folder. It has no `exec` and no `socket`. The capabilities that a project declares, and the limits
+//! of `ztk::limit`, come with step 2 of the spec.
 //!
 //! The environment of a program is the environment of dockyard. The
 //! `PATH` keeps only its full paths, because `ztcl::pty` refuses a
@@ -25,6 +29,10 @@ pub const Setup = struct {
     shell: []const u8,
     /// The clean `PATH`, for a new search after an install.
     path: []const u8 = "",
+    /// The program that runs the preview child with `--run`.
+    runner: []const u8 = "",
+    /// True when the preview child also uses the headless backend.
+    headless: bool = false,
 };
 
 /// The `PATH` with only its full paths, in memory of `a`.
@@ -60,6 +68,14 @@ pub fn allow(it: *ztcl.Interp, project: []const u8, env: []const [:0]const u8) !
     try it.register("::dockyard::findProgram", cmdFindProgram);
 }
 
+/// Turns on the capabilities of the preview child: `file`, `channels`,
+/// and `clock`, below the folder of the project.
+pub fn allowPreview(it: *ztcl.Interp, project: []const u8) !void {
+    const cap = ztcl.interp.Capability;
+    try it.allow(@intFromEnum(cap.file) | @intFromEnum(cap.channels) | @intFromEnum(cap.clock));
+    try ztcl.fsroot.setRoot(it, project);
+}
+
 /// `::dockyard::findProgram name path`: the full path of the program,
 /// or an empty string. The root folder of `file` hides the host folders,
 /// so the search runs here.
@@ -89,6 +105,8 @@ pub fn setVars(it: *ztcl.Interp, s: Setup) !void {
     try it.setVar("::dockyard::agent_name", .{ .str = s.agent_name });
     try it.setVar("::dockyard::shell", .{ .str = s.shell });
     try it.setVar("::dockyard::path", .{ .str = s.path });
+    try it.setVar("::dockyard::runner", .{ .str = s.runner });
+    try it.setVar("::dockyard::headless", .{ .str = if (s.headless) "1" else "0" });
 }
 
 test "the PATH keeps only full paths" {

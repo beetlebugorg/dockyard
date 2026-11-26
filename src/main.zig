@@ -3,6 +3,10 @@
 //! folder). The terminal pane runs the agent program from the `PATH`,
 //! or a shell when the `PATH` has none.
 //!
+//! `dockyard --run FILE` runs the script of a project for the preview
+//! pane instead. The window script starts this mode as a child process,
+//! on a pseudo-terminal, so the output of the script shows in the pane.
+//!
 //! The program makes a ztcl interpreter with the capabilities of
 //! `host.zig`, a backend (Wayland on Linux, AppKit on macOS, or the
 //! headless backend with `--headless`), and a ztk `App`, as the `ztk`
@@ -19,6 +23,7 @@ const window_script = @embedFile("dockyard.tcl");
 const usage =
     \\usage: dockyard [flags] [project folder]
     \\  --agent PROGRAM          run PROGRAM in the terminal pane (default: claude from the PATH)
+    \\  --run FILE               run the script FILE of a project (the preview child)
     \\  --headless               use the headless backend
     \\  --dark                   the dark color scheme
     \\  --exit-after-frames N    exit after N frames
@@ -29,6 +34,8 @@ const usage =
 fn write(ctx: ?*anyopaque, bytes: []const u8) void {
     const w: *Io.Writer = @ptrCast(@alignCast(ctx.?));
     w.writeAll(bytes) catch {};
+    // The preview pane shows each line when the script writes it.
+    w.flush() catch {};
 }
 
 fn fail(err: *Io.Writer, comptime fmt: []const u8, args: anytype) noreturn {
@@ -65,6 +72,7 @@ pub fn main(init: std.process.Init) !void {
     var screenshot: ?[]const u8 = null;
     var agent_flag: ?[]const u8 = null;
     var project: ?[]const u8 = null;
+    var run_file: ?[]const u8 = null;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const a: []const u8 = args[i];
@@ -76,6 +84,9 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, a, "--agent") and has_value) {
             i += 1;
             agent_flag = args[i];
+        } else if (std.mem.eql(u8, a, "--run") and has_value) {
+            i += 1;
+            run_file = args[i];
         } else if (std.mem.eql(u8, a, "--exit-after-frames") and has_value) {
             i += 1;
             max_frames = std.fmt.parseInt(u64, args[i], 10) catch fail(err, "dockyard: bad frame count\n", .{});
@@ -94,6 +105,7 @@ pub fn main(init: std.process.Init) !void {
     // The shell gives the current folder in PWD.
     const cwd = init.environ_map.get("PWD") orelse "/";
     const folder = if (project) |p| try std.fs.path.resolve(arena, &.{ cwd, p }) else cwd;
+    const run_path = if (run_file) |f| try std.fs.path.resolve(arena, &.{ cwd, f }) else null;
     const env = try host.environment(arena, init.environ_map);
     const path = try host.cleanPath(arena, init.environ_map.get("PATH") orelse "/usr/bin:/bin");
     const agent = if (agent_flag) |f| f else try host.findProgram(arena, path, "claude");
@@ -102,13 +114,19 @@ pub fn main(init: std.process.Init) !void {
     try it.init(init.gpa);
     defer it.deinit();
     it.output = .{ .ctx = out, .write = write };
-    try host.allow(&it, folder, env);
-    try host.setVars(&it, .{
-        .project = folder,
-        .agent = agent,
-        .shell = init.environ_map.get("SHELL") orelse "/bin/sh",
-        .path = path,
-    });
+    if (run_path) |f| {
+        try host.allowPreview(&it, std.fs.path.dirname(f) orelse "/");
+    } else {
+        try host.allow(&it, folder, env);
+        try host.setVars(&it, .{
+            .project = folder,
+            .agent = agent,
+            .shell = init.environ_map.get("SHELL") orelse "/bin/sh",
+            .path = path,
+            .runner = try std.process.executablePathAlloc(io, arena),
+            .headless = headless,
+        });
+    }
 
     var head: ?*ztk.headless.Headless = null;
     var wl: if (ztk.wayland_enabled) ?*ztk.wayland.Wayland else void = if (ztk.wayland_enabled) null else {};
@@ -133,12 +151,14 @@ pub fn main(init: std.process.Init) !void {
         if (wl) |w| w.deinit();
     };
 
-    const app = try ztk.App.init(init.gpa, &it, .{ .root_class = "Dockyard", .app_name = "dockyard", .platform = platform, .dark = dark, .io = io, .on_exit = exitNow, .render_mode = .threaded, .start_us = start_us });
+    const run_name = if (run_path) |f| std.fs.path.basename(f) else "";
+    const app = try ztk.App.init(init.gpa, &it, .{ .root_class = if (run_path != null) "Preview" else "Dockyard", .app_name = if (run_path != null) "preview" else "dockyard", .platform = platform, .dark = dark, .io = io, .on_exit = exitNow, .render_mode = .threaded, .start_us = start_us });
     defer app.deinit();
     app.max_frames = max_frames;
 
     var status: u8 = 0;
-    if (app.runScript(window_script)) |_| {
+    const script = if (run_path != null) try std.fmt.allocPrint(arena, "source {{/{s}}}", .{run_name}) else window_script;
+    if (app.runScript(script)) |_| {
         app.run() catch |e| {
             err.print("{s}\n", .{if (e == error.TclError) it.str(it.result) catch "error" else @errorName(e)}) catch {};
             status = 1;
