@@ -10,6 +10,8 @@ Read these pages before you work:
 
 Put plans, task lists, reports, and limits in `docs/dev/`.
 
+The CPU limit of ztcl is the compute limit, and it counts compute units. Use these terms in code, docs, and messages.
+
 ## Commands
 
 Use Zig 0.16.0. Run each build, test, and run command under a memory cap:
