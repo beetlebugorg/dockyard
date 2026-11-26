@@ -29,7 +29,7 @@ pack .preview.head.state -side left
 # size from the grid, so the size of the image does not change it.
 frame .preview.box -width 480 -height 480
 pack propagate .preview.box 0
-label .preview.box.img -anchor nw -borderwidth 0 -padx 0 -pady 0
+ttk::label .preview.box.img -anchor nw -padding 0
 place .preview.box.img -x 0 -y 0 -relwidth 1 -relheight 1
 ztk::terminal .preview.log -width 60 -height 8 -cwd /
 pack .preview.head -fill x -pady {0 6}
@@ -107,6 +107,7 @@ proc ::dockyard::preview::restart {} {
     variable frames -1
     variable sent ""
     set cmd [list $::dockyard::runner --run [file join $::dockyard::project main.tcl] --headless]
+    if {$::dockyard::dark} {lappend cmd --dark}
     .preview.log configure -exitcommand [list ::dockyard::preview::ended $run] -command $cmd
     state "Run $run of main.tcl"
 }

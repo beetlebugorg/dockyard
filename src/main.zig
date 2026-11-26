@@ -39,6 +39,7 @@ const usage =
     \\  --headless               use the headless backend
     \\  --dark                   the dark color scheme
     \\  --exit-after-frames N    exit after N frames
+    \\  --exit-after-ms N        exit N ms after the start
     \\  --screenshot FILE.png    with --headless: write the last frame at the exit
     \\
 ;
@@ -57,6 +58,15 @@ fn fail(err: *Io.Writer, comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 var exit_err: ?*Io.Writer = null;
+var the_app: ?*ztk.App = null;
+
+/// `::dockyard::stop`: `App.run` returns at the start of the next pass,
+/// as it does after the last frame of `--exit-after-frames`. So the
+/// screenshot of `--screenshot` is written.
+fn cmdStop(_: *ztcl.Interp, _: []const ztcl.Value, _: ?*ztcl.interp.Cmd) ztcl.Error!ztcl.Value {
+    if (the_app) |a| a.max_frames = a.frames;
+    return .{ .str = "" };
+}
 
 fn exitNow(code: u8) noreturn {
     if (exit_err) |e| e.flush() catch {};
@@ -81,6 +91,7 @@ pub fn main(init: std.process.Init) !void {
     var headless = false;
     var dark = false;
     var max_frames: ?u64 = null;
+    var exit_ms: ?u64 = null;
     var screenshot: ?[]const u8 = null;
     var agent_flag: ?[]const u8 = null;
     var project: ?[]const u8 = null;
@@ -105,6 +116,9 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, a, "--exit-after-frames") and has_value) {
             i += 1;
             max_frames = std.fmt.parseInt(u64, args[i], 10) catch fail(err, "dockyard: bad frame count\n", .{});
+        } else if (std.mem.eql(u8, a, "--exit-after-ms") and has_value) {
+            i += 1;
+            exit_ms = std.fmt.parseInt(u64, args[i], 10) catch fail(err, "dockyard: bad time\n", .{});
         } else if (std.mem.eql(u8, a, "--screenshot") and has_value) {
             i += 1;
             screenshot = args[i];
@@ -146,6 +160,7 @@ pub fn main(init: std.process.Init) !void {
             .path = path,
             .runner = try std.process.executablePathAlloc(io, arena),
             .headless = headless,
+            .dark = dark,
         });
     }
 
@@ -155,6 +170,11 @@ pub fn main(init: std.process.Init) !void {
     var platform: ztk.platform.Platform = undefined;
     if (headless) {
         head = try ztk.headless.Headless.init(init.gpa);
+        // A person sees the headless window in the preview pane, so its
+        // timers use the clock of the system. `--exit-after-frames` keeps
+        // the clock of the tests, which moves by the full timeout of each
+        // wait.
+        head.?.real_clock = max_frames == null;
         platform = head.?.platform();
     } else if (ztk.appkit_enabled) {
         mac = ztk.appkit.AppKit.init(init.gpa) catch |e| fail(err, "dockyard: cannot use AppKit: {s}\n", .{@errorName(e)});
@@ -176,6 +196,8 @@ pub fn main(init: std.process.Init) !void {
     const app = try ztk.App.init(init.gpa, &it, .{ .root_class = if (run_path != null) "Preview" else "Dockyard", .app_name = if (run_path != null) "preview" else "dockyard", .platform = platform, .dark = dark, .io = io, .on_exit = exitNow, .render_mode = .threaded, .start_us = start_us });
     defer app.deinit();
     app.max_frames = max_frames;
+    the_app = app;
+    if (exit_ms != null) try it.register("dockyard::stop", cmdStop);
 
     var ctl: ?*control.Control = null;
     if (run_path) |f| {
@@ -188,7 +210,9 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var status: u8 = 0;
-    const script = if (run_path != null) try std.fmt.allocPrint(arena, "source {{/{s}}}", .{run_name}) else window_script;
+    const main_script = if (run_path != null) try std.fmt.allocPrint(arena, "source {{/{s}}}", .{run_name}) else window_script;
+    // The timer of --exit-after-ms starts with the script.
+    const script = if (exit_ms) |ms| try std.fmt.allocPrint(arena, "after {d} ::dockyard::stop\n{s}", .{ ms, main_script }) else main_script;
     if (ctl) |c| {
         // The child keeps running after an error, for the bridge.
         app.runScript(script) catch |e| {

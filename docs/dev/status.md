@@ -17,7 +17,8 @@ This page has the state of each step of the build order (section 9 of `spec.md`)
 | MCP bridge: ztk parts | ztk | ztk PR 96: `ztk::snapshot` (base64 PNG of a widget, drawn with the CPU renderer) and `ztk::tree` (the widgets with their geometry). Event injection is `event generate`; check pointer events end to end. dockyard uses ztk 4d53bc0. |
 | MCP bridge: events | ztk | ztk PR 97: `ztk::inject`. `event generate` leaves the hover flag of the dispatcher clear, so a generated press and release did not invoke a button. `ztk::inject` gives backend events to `App.handleEvent`. dockyard uses ztk 4695cb7. |
 | MCP bridge: server | dockyard | Done (dockyard PR 6): `src/mcp.zig` (`dockyard --mcp`, JSON-RPC over stdio), `src/control.zig` (the control socket of the preview child), `src/bridge.tcl` (the tools in Tcl), `src/project/CLAUDE.md` (the template), and `.mcp.json`. |
-| Current ztk | dockyard | Done: ztk 3ae208e (ztcl 821a3a7), with `ztk bundle`, `ztk::terminal -shell` and `-command` on libghostty-vt, and `ztcl::vm` on macOS. |
+| Current ztk | dockyard | Done: ztk fffc1cc (ztcl 821a3a7), with the photo fix of ztk PR 224 and the real clock of ztk PR 225, with `ztk bundle`, `ztk::terminal -shell` and `-command` on libghostty-vt, and `ztcl::vm` on macOS. |
+| README and user docs (issue 11) | dockyard | Done: README, `docs/guide.md`, `docs/security.md`, `docs/faq.md`, and `tools/screenshots.sh` for `docs/images/`. The live replay page of issue 11 is not started. |
 | Build button | dockyard | Not started. |
 | App list and history | dockyard | Not started. |
 
@@ -37,6 +38,8 @@ This page has the state of each step of the build order (section 9 of `spec.md`)
 - dockyard writes `.mcp.json` and `CLAUDE.md` into a project that has none. `.mcp.json` has the full path of the dockyard program. The agent program asks the user to approve a server of a project file before it uses it (not checked here: the tests never run the agent program).
 - The cost of the image pane, measured with a ReleaseFast build and `time` in the child: `ztk::snapshot .` of an 800x600 window with 20 buttons is 8.3 ms, and `image create photo -data` of the result is 2.9 ms. A Debug build gives 135 ms for the snapshot.
 - A click on a ztk button gives it the focus. The `type` and `key` tools take a `widget` argument for this reason.
+- The headless backend of the preview child and of `dockyard --headless` uses the clock of the system (`Headless.real_clock`, ztk PR 225). Before, the clock of the headless backend moved by the full timeout of each wait, so `after 1000` ran at once and the child used a full CPU core. `--exit-after-frames` keeps the clock of the tests.
+- The image of the preview is a `ttk::label`. The classic `label` of ztk has no `-image` option.
 - Open bug: a run of `dockyard --headless --exit-after-frames 3` did not end on the GitHub runner (60 s limit) and ends in 0.2 s locally. The cause is not known. CI runs only the build and the tests. If the bug occurs with ztk alone, file it as a ztk issue.
 
 - The preview child has `file`, `channels` (for `source`), and `clock`, with the project folder as the root folder (`src/host.zig`).

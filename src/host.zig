@@ -39,6 +39,9 @@ pub const Setup = struct {
     runner: []const u8 = "",
     /// True when the preview child also uses the headless backend.
     headless: bool = false,
+    /// True when the window uses the dark color scheme. The preview
+    /// child uses the same scheme.
+    dark: bool = false,
 };
 
 /// The path of the control socket of the preview of `project`, from
@@ -175,6 +178,7 @@ pub fn setVars(it: *ztcl.Interp, s: Setup) !void {
     try it.setVar("::dockyard::path", .{ .str = s.path });
     try it.setVar("::dockyard::runner", .{ .str = s.runner });
     try it.setVar("::dockyard::headless", .{ .str = if (s.headless) "1" else "0" });
+    try it.setVar("::dockyard::dark", .{ .str = if (s.dark) "1" else "0" });
     try it.setVar("::dockyard::claude_md", .{ .str = claude_md });
 }
 
