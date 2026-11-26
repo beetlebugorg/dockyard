@@ -12,7 +12,9 @@ This page has the state of each step of the build order (section 9 of `spec.md`)
 | CI | dockyard | Done: `.github/workflows/ci.yml` (dockyard PR 3). Each change to main goes in a PR. |
 | Live preview, first form | ztk, dockyard | Done: ztk PR 93 (ztcl with `ztcl::watch`). The preview pane runs `dockyard --run main.tcl` on a PTY, shows its output, and starts it again 150 ms after the last change outside `.git`. On Wayland the app opens its own window. |
 | Live preview, pane form | ztk, dockyard | Next. It needs ztk embedding (spec section 8, ztk item 5), the sandbox of the project, and a reload with no restart. |
-| MCP bridge | ztcl, ztk, dockyard | Not started. |
+| Live preview, pane form: plan | ztk | ztk PR 95: `docs/dev/embed.md` (`ztk::embed`, an embed backend, a shared atlas, the copy of the child scene). |
+| MCP bridge: ztk parts | ztk | ztk PR 96: `ztk::snapshot` (base64 PNG of a widget, drawn with the CPU renderer) and `ztk::tree` (the widgets with their geometry). Event injection is `event generate`; check pointer events end to end. |
+| MCP bridge: server | ztcl or dockyard | Not started. |
 | Build button | dockyard | Not started. |
 | App list and history | dockyard | Not started. |
 
@@ -23,6 +25,9 @@ This page has the state of each step of the build order (section 9 of `spec.md`)
 3. The Build button and the app list (spec sections 6 and 7).
 
 ## Notes
+
+- The MCP server needs a control path into the preview interpreter. With the child process form, the child has no `socket` capability. One way: the Zig code of `dockyard --run` reads Tcl requests from a pipe or a loopback socket that the host opens before `main.tcl` runs, and evaluates them in the child interpreter from a timer of the loop. With `ztk::embed`, the parent evaluates them directly.
+- A run of `dockyard --headless --exit-after-frames 3` did not end on the GitHub runner (60 s limit) and ends in 0.2 s locally. The cause is not known. CI runs only the build and the tests.
 
 - The preview child has `file`, `channels` (for `source`), and `clock`, with the project folder as the root folder (`src/host.zig`).
 - The tests run the installed `dockyard` program as the preview child (`DOCKYARD_EXE` in `build.zig`), in a new folder `/tmp/dockyard-test-*` for each test.
