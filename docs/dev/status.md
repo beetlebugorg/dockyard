@@ -22,7 +22,10 @@ This page has the state of each step of the build order (section 9 of `spec.md`)
 
 ## Next steps
 
-1. The Build button and the app list (spec sections 6 and 7).
+1. WIP: the Build button and the app list (spec sections 6 and 7). Not started. Facts from this session: `ztcl build` makes only a WebAssembly module (`--wasm`, ztcl `src/buildcmd.zig`). Static native binaries wait for ztcl issue 40, and the app bundles for ztk issues 56, 59, and 60. All four are open. Resume steps:
+   1. Add the app list: the project folders below `~/dockyard/`, each with its name, its last commit, and its `main.tcl` state. Open a project in the window from the list.
+   2. Add the Build button with the targets that exist today. Show the native targets as not available until ztcl issue 40 is merged.
+   3. Add the history pane (spec section 6): a commit after each change, and a small `ztk::snapshot` of each version.
 2. `ztk::embed` from ztk `docs/dev/embed.md`. PR 1 of that plan shares the fonts and the atlas of the parent App. `App.fonts` and `App.atlas` are values, with 40 uses in 13 files, and 3 of the files (`appkit.zig`, `windows.zig`, `d3d12.zig`) are in the macOS and Windows work (`grep -rn "app\.atlas\b\|\.atlas\.\|app\.fonts\b\|\.fonts\." src`). Agree on the change with the owners of those files first.
 
 ## Notes
