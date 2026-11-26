@@ -8,8 +8,10 @@
 //!
 //! The preview child (`dockyard --run FILE`) turns on `file`,
 //! `channels` (for `source`), and `clock`, with the folder of FILE as
-//! the root folder. It has no `exec` and no `socket`. The capabilities that a project declares, and the limits
-//! of `ztk::limit`, come with step 2 of the spec.
+//! the root folder. It has no `exec` and no `socket`. Both interpreters
+//! get the clock of the system for `clock` and `time`. The capabilities
+//! that a project declares, and the limits of `ztk::limit`, come with
+//! step 2 of the spec.
 //!
 //! The environment of a program is the environment of dockyard. The
 //! `PATH` keeps only its full paths, because `ztcl::pty` refuses a
@@ -17,6 +19,9 @@
 
 const std = @import("std");
 const ztcl = @import("ztcl");
+
+/// The CLAUDE.md that dockyard writes into a project that has none.
+pub const claude_md = @embedFile("project/CLAUDE.md");
 
 pub const Setup = struct {
     /// The folder of the project. The terminal starts in it.
@@ -34,6 +39,15 @@ pub const Setup = struct {
     /// True when the preview child also uses the headless backend.
     headless: bool = false,
 };
+
+/// The path of the control socket of the preview of `project`, from
+/// the folder `runtime` (`XDG_RUNTIME_DIR`). With no folder, the path
+/// is in `/tmp` with the user ID in its name.
+pub fn controlPath(a: std.mem.Allocator, runtime: ?[]const u8, project: []const u8) ![:0]const u8 {
+    const hash = std.hash.Wyhash.hash(0, project);
+    if (runtime) |r| if (r.len > 0) return std.fmt.allocPrintSentinel(a, "{s}/dockyard-{x:0>16}.sock", .{ r, hash }, 0);
+    return std.fmt.allocPrintSentinel(a, "/tmp/dockyard-{d}-{x:0>16}.sock", .{ std.c.getuid(), hash }, 0);
+}
 
 /// The `PATH` with only its full paths, in memory of `a`.
 pub fn cleanPath(a: std.mem.Allocator, path: []const u8) ![]const u8 {
@@ -64,6 +78,7 @@ pub fn allow(it: *ztcl.Interp, project: []const u8, env: []const [:0]const u8) !
     const cap = ztcl.interp.Capability;
     try it.allow(@intFromEnum(cap.exec) | @intFromEnum(cap.channels) | @intFromEnum(cap.file));
     try ztcl.fsroot.setRoot(it, project);
+    it.clock_host = clock_host;
     it.exec_host = .{ .allow = null, .timeout_ms = 0, .env = env };
     try it.register("::dockyard::findProgram", cmdFindProgram);
 }
@@ -74,6 +89,34 @@ pub fn allowPreview(it: *ztcl.Interp, project: []const u8) !void {
     const cap = ztcl.interp.Capability;
     try it.allow(@intFromEnum(cap.file) | @intFromEnum(cap.channels) | @intFromEnum(cap.clock));
     try ztcl.fsroot.setRoot(it, project);
+    it.clock_host = clock_host;
+}
+
+/// The host clock of `clock` and `time`: the real time of the system,
+/// and the zone files of `/usr/share/zoneinfo`.
+const ClockHost = @typeInfo(@FieldType(ztcl.Interp, "clock_host")).optional.child;
+pub const clock_host: ClockHost = .{ .now = clockNow, .zone = clockZone };
+
+fn clockNow(_: ?*anyopaque) i64 {
+    var ts: std.c.timespec = undefined;
+    if (std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts) != 0) return 0;
+    return @as(i64, ts.sec) * 1_000_000 + @divFloor(@as(i64, ts.nsec), 1000);
+}
+
+fn clockZone(_: ?*anyopaque, name: []const u8, a: std.mem.Allocator) ?[]const u8 {
+    const path = std.fmt.allocPrintSentinel(a, "/usr/share/zoneinfo/{s}", .{name}, 0) catch return null;
+    const fd = std.c.open(path.ptr, .{ .ACCMODE = .RDONLY }, @as(std.c.mode_t, 0));
+    if (fd < 0) return null;
+    defer _ = std.c.close(fd);
+    var out: std.ArrayList(u8) = .empty;
+    var buf: [4096]u8 = undefined;
+    while (out.items.len < 1 << 20) {
+        const n = std.c.read(fd, &buf, buf.len);
+        if (n < 0) return null;
+        if (n == 0) break;
+        out.appendSlice(a, buf[0..@intCast(n)]) catch return null;
+    }
+    return out.items;
 }
 
 /// `::dockyard::findProgram name path`: the full path of the program,
@@ -107,6 +150,17 @@ pub fn setVars(it: *ztcl.Interp, s: Setup) !void {
     try it.setVar("::dockyard::path", .{ .str = s.path });
     try it.setVar("::dockyard::runner", .{ .str = s.runner });
     try it.setVar("::dockyard::headless", .{ .str = if (s.headless) "1" else "0" });
+    try it.setVar("::dockyard::claude_md", .{ .str = claude_md });
+}
+
+test "the control path depends on the project folder" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const one = try controlPath(a, "/run/user/7", "/home/u/app");
+    try std.testing.expect(std.mem.startsWith(u8, one, "/run/user/7/dockyard-"));
+    try std.testing.expect(!std.mem.eql(u8, one, try controlPath(a, "/run/user/7", "/home/u/other")));
+    try std.testing.expect(std.mem.startsWith(u8, try controlPath(a, null, "/x"), "/tmp/dockyard-"));
 }
 
 test "the PATH keeps only full paths" {

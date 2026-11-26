@@ -7,6 +7,15 @@
 //! pane instead. The window script starts this mode as a child process,
 //! on a pseudo-terminal, so the output of the script shows in the pane.
 //!
+//! In this mode the child also opens the control socket of the MCP
+//! bridge (`control.zig`). An error of the script goes to the pane and
+//! to the bridge, and the child keeps running, so the bridge can report
+//! the error.
+//!
+//! `dockyard --mcp [project folder]` is the MCP server of the bridge
+//! (`mcp.zig`), for the agent program. It makes no interpreter and no
+//! window.
+//!
 //! The program makes a ztcl interpreter with the capabilities of
 //! `host.zig`, a backend (Wayland on Linux, AppKit on macOS, or the
 //! headless backend with `--headless`), and a ztk `App`, as the `ztk`
@@ -17,6 +26,8 @@ const Io = std.Io;
 const ztcl = @import("ztcl");
 const ztk = @import("ztk");
 const host = @import("host.zig");
+const control = @import("control.zig");
+const mcp = @import("mcp.zig");
 
 const window_script = @embedFile("dockyard.tcl");
 
@@ -24,6 +35,7 @@ const usage =
     \\usage: dockyard [flags] [project folder]
     \\  --agent PROGRAM          run PROGRAM in the terminal pane (default: claude from the PATH)
     \\  --run FILE               run the script FILE of a project (the preview child)
+    \\  --mcp                    serve the MCP bridge of the project on stdin and stdout
     \\  --headless               use the headless backend
     \\  --dark                   the dark color scheme
     \\  --exit-after-frames N    exit after N frames
@@ -73,6 +85,7 @@ pub fn main(init: std.process.Init) !void {
     var agent_flag: ?[]const u8 = null;
     var project: ?[]const u8 = null;
     var run_file: ?[]const u8 = null;
+    var serve_mcp = false;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const a: []const u8 = args[i];
@@ -87,6 +100,8 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, a, "--run") and has_value) {
             i += 1;
             run_file = args[i];
+        } else if (std.mem.eql(u8, a, "--mcp")) {
+            serve_mcp = true;
         } else if (std.mem.eql(u8, a, "--exit-after-frames") and has_value) {
             i += 1;
             max_frames = std.fmt.parseInt(u64, args[i], 10) catch fail(err, "dockyard: bad frame count\n", .{});
@@ -105,6 +120,12 @@ pub fn main(init: std.process.Init) !void {
     // The shell gives the current folder in PWD.
     const cwd = init.environ_map.get("PWD") orelse "/";
     const folder = if (project) |p| try std.fs.path.resolve(arena, &.{ cwd, p }) else cwd;
+    const runtime = init.environ_map.get("XDG_RUNTIME_DIR");
+    if (serve_mcp) {
+        const sock = try host.controlPath(arena, runtime, folder);
+        try mcp.main(init.gpa, io, sock);
+        return;
+    }
     const run_path = if (run_file) |f| try std.fs.path.resolve(arena, &.{ cwd, f }) else null;
     const env = try host.environment(arena, init.environ_map);
     const path = try host.cleanPath(arena, init.environ_map.get("PATH") orelse "/usr/bin:/bin");
@@ -156,9 +177,29 @@ pub fn main(init: std.process.Init) !void {
     defer app.deinit();
     app.max_frames = max_frames;
 
+    var ctl: ?*control.Control = null;
+    if (run_path) |f| {
+        const sock = try host.controlPath(arena, runtime, std.fs.path.dirname(f) orelse "/");
+        const err_sink: ztcl.Output = .{ .ctx = err, .write = write };
+        ctl = control.start(arena, app, sock, err_sink, exitNow) catch |e| blk: {
+            err.print("dockyard: no MCP bridge: {s}\n", .{@errorName(e)}) catch {};
+            break :blk null;
+        };
+    }
+
     var status: u8 = 0;
     const script = if (run_path != null) try std.fmt.allocPrint(arena, "source {{/{s}}}", .{run_name}) else window_script;
-    if (app.runScript(script)) |_| {
+    if (ctl) |c| {
+        // The child keeps running after an error, for the bridge.
+        app.runScript(script) catch |e| {
+            const info = if (e == error.TclError) it.str(it.getVarPlain("::errorInfo") catch it.result) catch "error" else @errorName(e);
+            c.loadError(info);
+        };
+        app.run() catch |e| {
+            err.print("{s}\n", .{if (e == error.TclError) it.str(it.result) catch "error" else @errorName(e)}) catch {};
+            status = 1;
+        };
+    } else if (app.runScript(script)) |_| {
         app.run() catch |e| {
             err.print("{s}\n", .{if (e == error.TclError) it.str(it.result) catch "error" else @errorName(e)}) catch {};
             status = 1;
