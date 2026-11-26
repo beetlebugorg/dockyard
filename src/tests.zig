@@ -1,14 +1,27 @@
 //! Tests of dockyard. They run the window on the headless backend with
 //! `/bin/sh` as the agent program. No test starts the real agent program.
 //! Each test has its own project folder in `/tmp`. The preview child is
-//! the installed `dockyard` program (`DOCKYARD_EXE`) on the headless
-//! backend.
+//! the `dockyard` program of the build, or `DOCKYARD_EXE` when it is set,
+//! on the headless backend.
 
 const std = @import("std");
 const ztcl = @import("ztcl");
 const ztk = @import("ztk");
 const host = @import("host.zig");
+const test_options = @import("test_options");
 const mcp = @import("mcp.zig");
+
+/// The path of the dockyard program: `DOCKYARD_EXE`, or the program of
+/// the build. The path of the build can be relative to the build root,
+/// the folder of the test run, so `realpath` makes it a full path.
+fn exePath() [*:0]const u8 {
+    if (std.c.getenv("DOCKYARD_EXE")) |p| return p;
+    const S = struct {
+        var buf: [std.c.PATH_MAX]u8 = undefined;
+    };
+    const built = std.fmt.comptimePrint("{s}", .{test_options.dockyard_exe});
+    return std.c.realpath(built, &S.buf) orelse built;
+}
 
 test {
     _ = host;
@@ -39,7 +52,7 @@ const Run = struct {
         const a = r.arena.allocator();
         const env = try a.dupe([:0]const u8, &.{ "PATH=/usr/bin:/bin", "HOME=/tmp", "PS1=$ " });
         try host.allow(&r.it, folder, env);
-        const runner = std.mem.sliceTo(std.c.getenv("DOCKYARD_EXE") orelse "/bin/false", 0);
+        const runner = std.mem.sliceTo(exePath(), 0);
         try host.setVars(&r.it, .{ .project = folder, .agent = agent, .shell = "/bin/sh", .path = "/usr/bin:/bin", .agent_name = "no-such-agent-program", .runner = runner, .headless = true });
         r.head = try ztk.headless.Headless.init(gpa);
         r.app = try ztk.App.init(gpa, &r.it, .{ .platform = r.head.platform(), .app_name = "dockyard" });
@@ -125,7 +138,7 @@ fn removeFolder(a: std.mem.Allocator, folder: []const u8) void {
         const path = std.fmt.allocPrintSentinel(a, "{s}/{s}", .{ folder, name }, 0) catch return;
         _ = std.c.unlink(path.ptr);
     }
-    const dir = a.dupeZ(u8, folder) catch return;
+    const dir = a.dupeSentinel(u8, folder, 0) catch return;
     _ = std.c.rmdir(dir.ptr);
 }
 
@@ -241,8 +254,8 @@ test "dockyard --mcp answers a client on stdin and stdout" {
     // The preview child is up when a tool call gets its answer.
     _ = try r.tool("log", "{}");
     const a = r.arena.allocator();
-    const exe = std.c.getenv("DOCKYARD_EXE") orelse return error.SkipZigTest;
-    const folder = try a.dupeZ(u8, std.mem.sliceTo(&r.dir, 0));
+    const exe = exePath();
+    const folder = try a.dupeSentinel(u8, std.mem.sliceTo(&r.dir, 0), 0);
     var to_child: [2]c_int = undefined;
     var from_child: [2]c_int = undefined;
     if (std.c.pipe(&to_child) != 0 or std.c.pipe(&from_child) != 0) return error.Unexpected;

@@ -2,11 +2,11 @@
     .name = .dockyard,
     .fingerprint = 0x240b86b880fe647b,
     .version = "0.1.0",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .ztk = .{
-            .url = "git+https://github.com/beetlebugorg/ztk#4695cb79ea425eaa8b06dd59070c438e4e9a237f",
-            .hash = "ztk-0.2.0-beta-pPTF2AzNMQBqsdabwzYDpCIo09O1Tego860nTxx6YpYn",
+            .url = "git+https://github.com/beetlebugorg/ztk#9fc353e66d845d1ec83865dcebc01b23ac7f4863",
+            .hash = "ztk-0.2.0-beta-pPTF2C-3OgCHgtBY33516K4r0aGCrO8mllv8c3upscQd",
         },
     },
     .paths = .{ "build.zig", "build.zig.zon", "src" },

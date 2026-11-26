@@ -4,7 +4,7 @@ dockyard is a desktop app for ztcl and ztk apps. Its terminal pane runs an agent
 
 ## Build and run
 
-Use Zig 0.16.0.
+Use Zig 0.17.0.
 
 ```sh
 zig build
