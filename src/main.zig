@@ -29,6 +29,7 @@ const host = @import("host.zig");
 const control = @import("control.zig");
 const mcp = @import("mcp.zig");
 const apps = @import("apps.zig");
+const proxy = @import("proxy.zig");
 
 const window_script = @embedFile("dockyard.tcl");
 
@@ -155,6 +156,7 @@ pub fn main(init: std.process.Init) !void {
     } else {
         try host.allow(&it, folder, env);
         try apps.register(&it, io, folder);
+        try proxy.register(&it);
         try host.setVars(&it, .{
             .project = folder,
             .agent = agent,

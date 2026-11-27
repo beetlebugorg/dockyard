@@ -23,12 +23,16 @@ This page has the state of each step of the build order (section 9 of `spec.md`)
 | App list | dockyard | First form done: the Apps window lists the apps next to the project with their programs, with Launch and Open in dockyard. |
 | History | dockyard | Not started. |
 | Claude skill (issue 16) | dockyard | `skill/dockyard-app/` (SKILL.md and the `dockyard` CLI: new, run, check, build), `tools/skill.sh` (the zip with the ztk programs of all the targets, and the size check), `tools/skill-test.sh`, and the CI job `Skill (Linux)`. Not published: a release of the zip waits for the user. |
+| Sandbox plan (issues 13 and 15) | dockyard | `docs/dev/vm.md`: the parts, the image, the network, the threat model, and 8 steps. |
+| Egress proxy (step 1 of `vm.md`) | dockyard | Done: `src/proxy.zig`, the Tcl command `dockyard::proxy` (start, allow, events, and stop), with a relay test and a block test. CONNECT only. |
+| microVM terminal on macOS (issue 13) | dockyard, ztcl | Not started: needs the guest agent with a PTY session (ztcl `docs/dev/vm.md` step 4), the base image (`os/`), and a Mac to test. Linux waits for KVM and Windows for HCS in `ztcl::vm`. |
+| Sandbox monitor (issue 15) | dockyard | Not started: steps 5 to 7 of `vm.md`. |
 
 ## Next steps
 
-1. The Claude skill (issue 16).
-2. The terminal pane in a microVM on macOS (issue 13).
-3. The sandbox monitor and the sharing panel (issue 15).
+1. Step 2 of `docs/dev/vm.md`: the Buildroot tree in `os/` and the CI job for the base image. Resume: copy the layout of Printdeck OS (`os/` of the printdeck repository), with the kernel fragment of `vm.md` and ztcl `tools/vm-guest/kernel.fragment`. Build the binaries only, and read no GPL source.
+2. Step 4 of `vm.md` on a Mac: `dockyard::vm` and the terminal pane in the guest. It waits for the PTY session of the ztcl guest agent.
+3. Steps 5 to 7 of `vm.md` (issue 15): the monitor core on `dockyard::proxy events`, the two front ends, and the sharing panel. The core and the TUI can start on Linux now with the proxy events.
 4. The history pane (spec section 6), the live replay page (issue 11), and `ztk::embed` (ztk `docs/dev/embed.md`).
 
 ## Notes
