@@ -165,7 +165,12 @@ const Run = struct {
         var k: usize = 0;
         while (true) : (k += 1) {
             const answer = try mcp.handle(a, sock, msg);
-            if (std.mem.indexOf(u8, answer, "The preview is not running") == null or k >= 250) return answer;
+            if (std.mem.indexOf(u8, answer, "The preview is not running") == null) return answer;
+            if (k >= 250) {
+                // The output of the preview child tells why it has no bridge.
+                std.debug.print("the log of the preview: {s}\n", .{r.eval(".preview.log get -100 100") catch "(none)"});
+                return answer;
+            }
             _ = try r.eval("after 20 {set ::tick 1}; vwait ::tick");
         }
     }
