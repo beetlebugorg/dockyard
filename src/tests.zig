@@ -31,15 +31,16 @@ fn sleepMs(ms: u32) void {
 }
 
 /// The full path of `rel`, a path relative to the folder of the test run.
-fn fullPath(a: std.mem.Allocator, rel: []const u8) ![]const u8 {
+fn fullPath(a: std.mem.Allocator, rel: []const u8) ![:0]const u8 {
     const cwd = try std.process.currentPathAlloc(std.testing.io, a);
-    return std.fs.path.resolve(a, &.{ cwd, rel });
+    const p = try std.fs.path.resolve(a, &.{ cwd, rel });
+    return a.dupeSentinel(u8, p, 0);
 }
 
 /// The path of the dockyard program: `DOCKYARD_EXE`, or the program of
 /// the build, as a full path, since the path of the build can be
 /// relative to the build root.
-fn exePath() []const u8 {
+fn exePath() [:0]const u8 {
     if (comptime !on_win) {
         if (std.c.getenv("DOCKYARD_EXE")) |p| return std.mem.sliceTo(p, 0);
     }
