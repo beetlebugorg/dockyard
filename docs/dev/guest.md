@@ -12,7 +12,7 @@
 
 On an x86-64 Linux with KVM, steps 1 to 3 take about 45 ms.
 
-With `-image NAME`, the guest is a signed release of the store (`os/tools/manifest.sh`), and its second disk is the tools disk. The helper comes from that disk:
+With `-image NAME`, the guest is a signed release of the store (`os/tools/manifest.sh`), and its second disk is the Claude Code disk (a third disk, the build disk with Zig, mounts at `/opt/zig`). The helper comes from that disk:
 
 1. `ztcl::vm create -image NAME` and `start`, with the share as above.
 2. One `ztcl::vm exec` of a shell script (`tools_mount` in `sandbox.tcl`). It mounts the squashfs of `/dev/dm-1` read-only at `/tmp/tools`, then `proc`, a recursive bind of `/dev`, a tmpfs at `tmp`, `root`, and `inbox`, and the share at its folder of the disk (`/work`). Then it runs `chroot /tmp/tools /usr/libexec/dockyard/dockyard-guest serve --relay PORT`.

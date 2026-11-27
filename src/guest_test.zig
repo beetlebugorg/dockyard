@@ -244,6 +244,16 @@ fn hasKvm() bool {
     return c.access("/dev/kvm", 6) == 0 and c.access("/dev/vhost-vsock", 6) == 0;
 }
 
+fn readText(a: std.mem.Allocator, src: []const u8) ![]u8 {
+    const in = c.open((try z(a, src)).ptr, .{ .ACCMODE = .RDONLY }, @as(c.mode_t, 0));
+    if (in < 0) return error.FileNotFound;
+    defer _ = c.close(in);
+    const buf = try a.alloc(u8, 1 << 20);
+    const n = c.read(in, buf.ptr, buf.len);
+    if (n < 0) return error.ReadFailed;
+    return buf[0..@intCast(n)];
+}
+
 fn writeText(a: std.mem.Allocator, dst: []const u8, text: []const u8) !void {
     const out = c.open((try z(a, dst)).ptr, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(c.mode_t, 0o644));
     if (out < 0) return error.AccessDenied;
@@ -344,7 +354,7 @@ test "the terminal of the sandbox runs on a PTY of a guest over vsock" {
 
 const release_script =
     \\ztcl::vm image install release
-    \\set vm [dockyard::sandbox::boot -image dockyard-guest-test -memory 256 -share {/ /work rw}]
+    \\set vm [dockyard::sandbox::boot -image $::name -memory 256 -share {/ /work rw}]
     \\set work [dockyard::sandbox::path $vm /work]
     \\set ::out ""
     \\proc out {t} {append ::out $t}
@@ -352,20 +362,23 @@ const release_script =
     \\dockyard::sandbox::hooks $vm /root
     \\set s [dockyard::sandbox::session $vm -rows 30 -cols 100 -cwd /work -output out -exit ex \
     \\    -env {TERM=xterm-256color HOME=/root PATH=/bin:/sbin:/usr/bin}]
-    \\dockyard::sandbox::input $s "zig version; node -e 'console.log(\"n\"+(1+1))'; git --version; /bin/busybox cat hello.txt; /bin/busybox grep -c dockyard-guest /root/.claude/settings.json; echo from-tools > out.txt; exit 5\n"
-    \\after 20000 {set ::done timeout}
+    \\dockyard::sandbox::input $s "/bin/busybox cut -d' ' -f1 /proc/uptime; zig version; node -e 'console.log(\"n\"+(1+1))'; git --version; /bin/busybox cat hello.txt; /bin/busybox grep -c dockyard-guest /root/.claude/settings.json; echo from-tools > out.txt; exit 5\n"
+    \\after 60000 {set ::done timeout}
     \\vwait ::done
     \\ztcl::vm delete $vm
     \\file delete -force release store
     \\set f [open out.txt]
     \\set back [string trim [read $f]]
     \\close $f
-    \\list $::done [string match "*0.17.0*n2*git version*from-host*\n1*" [string map {\r ""} $::out]] $work $back
+    \\set want [expr {$::build ? "*0.17.0*n2*git version*from-host*\n1*" : "*n2*git version*from-host*\n1*"}]
+    \\list $::done [string match $want [string map {\r ""} $::out]] $work $back
 ;
 
-test "the pane runs from the tools disk of a signed release" {
+test "the pane runs from the disks of a signed release" {
     // KVM on x86-64 Linux. DOCKYARD_GUEST_RELEASE is the output folder of
-    // os/tools/manifest.sh, signed with the test key of dockyard.
+    // os/tools/manifest.sh, signed with the test key of dockyard: the
+    // release of the pane, or the release with the build disk. Zig runs
+    // in the pane with the build disk only.
     if (comptime !(on_linux and builtin.cpu.arch == .x86_64)) return error.SkipZigTest;
     const src = std.mem.sliceTo(c.getenv("DOCKYARD_GUEST_RELEASE") orelse return error.SkipZigTest, 0);
     if (!hasKvm()) return error.SkipZigTest;
@@ -375,8 +388,16 @@ test "the pane runs from the tools disk of a signed release" {
     const dir = try tempDir(a, "release");
     const rel = try std.fmt.allocPrint(a, "{s}/release", .{dir});
     _ = c.mkdir((try z(a, rel)).ptr, 0o755);
-    for ([_][]const u8{ "manifest.json", "manifest.json.sig", "x86_64-bzImage", "x86_64-root.img", "x86_64-tools.img" }) |f|
-        try copyFile(a, try std.fmt.allocPrint(a, "{s}/{s}", .{ src, f }), try std.fmt.allocPrint(a, "{s}/{s}", .{ rel, f }));
+    const names = [_][]const u8{ "manifest.json", "manifest.json.sig", "x86_64-bzImage", "x86_64-root.img", "x86_64-claude.img", "x86_64-build.img" };
+    for (names, 0..) |f, i| {
+        const from = try std.fmt.allocPrint(a, "{s}/{s}", .{ src, f });
+        if (i == names.len - 1 and c.access((try z(a, from)).ptr, 0) != 0) continue;
+        try copyFile(a, from, try std.fmt.allocPrint(a, "{s}/{s}", .{ rel, f }));
+    }
+    const manifest = try std.fmt.allocPrint(a, "{s}/manifest.json", .{src});
+    const mtext = try readText(a, manifest);
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, a, mtext, .{});
+    const name = parsed.object.get("name").?.string;
     try writeText(a, try std.fmt.allocPrint(a, "{s}/hello.txt", .{dir}), "from-host\n");
 
     var it: ztcl.Interp = undefined;
@@ -390,9 +411,19 @@ test "the pane runs from the tools disk of a signed release" {
     // A store of its own, so the test leaves the store of the user as it is.
     it.vm_host.image_store = try std.fmt.allocPrint(a, "{s}/store", .{dir});
     _ = it.eval(sandbox.script) catch return error.TclError;
+    try it.setVar("::name", .{ .str = name });
+    try it.setVar("::build", .{ .str = if (std.mem.indexOf(u8, name, "-build") != null) "1" else "0" });
+    var t0: c.timespec = undefined;
+    _ = c.clock_gettime(c.CLOCK.MONOTONIC, &t0);
     const res = it.eval(release_script) catch {
         std.debug.print("{s}\n", .{it.str(it.result) catch "error"});
+        if (it.eval("list $::done $::out")) |v| std.debug.print("{s}\n", .{it.str(v) catch ""}) else |_| {}
         return error.TclError;
     };
+    var t1: c.timespec = undefined;
+    _ = c.clock_gettime(c.CLOCK.MONOTONIC, &t1);
+    // The first command of the pane prints the uptime of the guest.
+    const up = it.str(try it.eval("regexp -line {^([0-9]+[.][0-9]+)$} [string map {\\r {}} $::out] - up; set up")) catch "";
+    std.debug.print("dockyard test: {s}: guest uptime {s} s at the first command; install, boot, commands, and delete in {d} ms\n", .{ name, up, (t1.sec - t0.sec) * 1000 + @divFloor(t1.nsec - t0.nsec, 1_000_000) });
     try std.testing.expectEqualStrings("5 1 /tmp/tools/work from-tools", try it.str(res));
 }

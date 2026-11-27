@@ -56,9 +56,10 @@ proc ::dockyard::sandbox::List {l} {
 # is read-only, and /tmp is a tmpfs.
 variable ::dockyard::sandbox::tools_root /tmp/tools
 
-# Mounts the tools disk (/dev/dm-1, a squashfs with dm-verity) at $1 and
-# the folders of the pane in it, then starts the helper of the disk in a
-# chroot. /inbox of the pane is a tmpfs for the files that the host
+# Mounts the Claude Code disk (/dev/dm-1, a squashfs with dm-verity) at
+# $1, the build disk (/dev/dm-2, Zig) at $1/opt/zig when the release has
+# it, and the folders of the pane, then starts the helper of the disk in
+# a chroot. /inbox of the pane is a tmpfs for the files that the host
 # shares. $2 is the folder of the share in the pane, or empty. $3 is
 # the relay port of the host. /tmp and
 # /root of the pane are tmpfs, since the disk is read-only.
@@ -67,6 +68,7 @@ variable ::dockyard::sandbox::tools_mount {
     b=/bin/busybox
     $b mkdir -p "$1"
     $b mount -t squashfs -o ro /dev/dm-1 "$1"
+    if [ -b /dev/dm-2 ]; then $b mount -t squashfs -o ro /dev/dm-2 "$1/opt/zig"; fi
     $b mount -t proc proc "$1/proc"
     $b mount -o rbind /dev "$1/dev"
     $b mount -t tmpfs -o mode=1777 tmpfs "$1/tmp"
@@ -78,8 +80,10 @@ variable ::dockyard::sandbox::tools_mount {
 
 # Starts a guest and the helper in it. The options:
 #   -image NAME     A signed release of the store (ztcl::vm image install).
-#                   Its second disk is the tools disk of os/tools, with the
-#                   helper. The pane runs in a chroot of that disk.
+#                   Its second disk is the Claude Code disk of os/tools,
+#                   with the helper, and its third disk, when it has one,
+#                   is the build disk. The pane runs in a chroot of the
+#                   Claude Code disk.
 #   -kernel F -initrd F -cmdline TEXT  The guest without -image (paths
 #                   below the root folder).
 #   -helper F       The helper program of the architecture of the guest,
