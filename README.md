@@ -1,26 +1,36 @@
-# dockyard
+<p align="center"><img src="assets/icon/dockyard-128.png" width="96" height="96" alt=""></p>
 
-dockyard is a desktop app for ztk apps. You chat with Claude Code in the terminal pane, and Claude Code writes the app in Tcl. The preview pane runs the app and shows each change at once. The MCP tools of dockyard give Claude Code screenshots of the app, its widget tree, and a way to click and type in it. dockyard is itself a ztk app.
+<h1 align="center">dockyard</h1>
 
-![dockyard with a tip calculator in the preview pane](docs/images/dockyard-light.png)
+<p align="center"><b>Build a desktop app by chatting with Claude Code. Watch it run while it is written. Ship one program for each OS.</b></p>
 
-The dark color scheme (`--dark`):
+![Claude Code writes a tip calculator in the terminal pane, and the preview pane runs it after each change](docs/images/dockyard-demo.gif)
+
+You describe the app in the terminal pane. Claude Code writes it in Tcl for [ztk](https://github.com/beetlebugorg/ztk), and the preview pane runs it after each change. Claude Code sees the preview too: the MCP tools of dockyard give it a screenshot, the widget tree, and clicks and keys, so it checks its own work. When the app is right, Build makes a program file for Linux, macOS, and Windows. The program needs no install and no runtime.
+
+dockyard is itself a ztk app, on the [ztcl](https://github.com/beetlebugorg/ztcl) interpreter, with no other dependency.
+
+| | |
+|---|---|
+| **Chat** | Claude Code, or another program, in a real terminal pane. |
+| **Preview** | The app runs after each save, in a sandbox that sees only the project folder. Click and type in it. |
+| **Build** | One program file for each of six targets: Linux, macOS, and Windows, on x86-64 and arm64. |
+| **Apps** | A list of your apps and their programs, with Launch and Open. |
+| **Sandbox** | `--sandbox` runs the terminal pane in a small Linux VM, with a network allow list. A first form, on Linux. |
+| **Monitor** | `--monitor` shows each network call, program, and file change of the sandbox, live. |
+| **Skill** | A skill for Claude that builds the same apps in a chat, with no dockyard window. |
+
+![dockyard in the light color scheme](docs/images/dockyard-light.png)
+
+<details><summary>The dark color scheme (<code>--dark</code>)</summary>
 
 ![dockyard in the dark color scheme](docs/images/dockyard-dark.png)
 
-`tools/screenshots.sh` makes these images from the headless build, with a fake agent program and a small app.
+</details>
 
 ## Install
 
-dockyard has no release yet. Build it from the source with [Zig 0.17.0](https://ziglang.org/download/).
-
-On Linux, install the build dependencies of ztk first (the names are for Debian and Ubuntu):
-
-```sh
-sudo apt-get install glslc libwayland-dev libxkbcommon-dev wayland-protocols
-```
-
-Then build dockyard:
+dockyard has no release yet. Build it from the source with [Zig 0.17.0](https://ziglang.org/download/):
 
 ```sh
 git clone https://github.com/beetlebugorg/dockyard
@@ -28,63 +38,40 @@ cd dockyard
 zig build -Doptimize=ReleaseFast
 ```
 
-The program is `zig-out/bin/dockyard`.
-
-Install Claude Code for the terminal pane:
-
-```sh
-npm install -g @anthropic-ai/claude-code
-```
+The program is `zig-out/bin/dockyard`. On Linux the build also needs `glslc`. Install Claude Code for the terminal pane: `npm install -g @anthropic-ai/claude-code`.
 
 ## First run
 
-1. Make a folder for the app, and start dockyard in it:
+1. Start dockyard in a new folder: `dockyard ~/dockyard/my-app`.
+2. dockyard writes `.mcp.json` and `CLAUDE.md` in the folder, and starts Claude Code in the terminal pane. Approve the `dockyard` MCP server when Claude Code asks.
+3. Describe your app: "Make a tip calculator with a slider for the tip."
+4. Claude Code writes `main.tcl`, and the preview shows the app. Click and type in the preview to try it, and ask for changes.
+5. Select your targets in the bar, and click Build. The programs are in `build/TARGET/` of the folder.
 
-   ```sh
-   mkdir -p ~/dockyard/my-app
-   dockyard ~/dockyard/my-app
-   ```
+A program for another system has limits today: a Linux program for another target has no Wayland window, and a macOS program made off a Mac has no AppKit window. The [guide](docs/guide.md#build) has the details, each pane, each flag, and each tool.
 
-2. dockyard writes `.mcp.json` and `CLAUDE.md` into the folder, and starts Claude Code in the terminal pane.
-3. Approve the `dockyard` MCP server when Claude Code asks.
-4. Describe your app, for example "Make a tip calculator with a slider for the tip".
-5. Claude Code writes `main.tcl`. The preview pane shows the app after each change. Click and type in the preview to try it.
+## Is it safe?
 
-## How it works
+In plain words:
 
-- **The terminal pane** is a `ztk::terminal` widget on a pseudo-terminal (`ztcl::pty`). It runs `claude` from the `PATH`, or your shell when the `PATH` has no `claude`. `--agent PROGRAM` runs another program.
-- **The preview pane** runs `main.tcl` in a child process on the headless backend of ztk. A file watcher (`ztcl::watch`) starts the child again 150 ms after the last change. The pane shows the image of the child (`ztk::snapshot`) and sends your input to it (`ztk::inject`).
-- **The MCP tools** (`dockyard --mcp`) give Claude Code the preview: `screenshot`, `widgets`, `eval`, `click`, `type`, `key`, `scroll`, `errors`, `log`, and `restart`.
-- **Build** makes one program file of the app for each selected target with `ztk bundle`, in `build/TARGET/` of the project. **Apps** lists your apps and their programs.
+- **The preview is a sandbox.** The app that Claude Code writes can read and write its own folder and read the clock. It cannot start a program, open a network connection, or read a file outside the project.
+- **The terminal pane is not a sandbox,** unless you start dockyard with `--sandbox`. Claude Code runs as you, with your files and your network. It has its own permission prompts: read them before you approve a command.
+- **With `--sandbox`,** the terminal pane runs in a small Linux virtual machine. The programs in it reach only the hosts of an allow list, and the [monitor](docs/monitor.md) shows each call. This is a first form on Linux: [the sandbox](docs/sandbox.md) says what works today.
+- **Your code stays on your computer.** dockyard sends nothing anywhere. Claude Code sends your messages and the files that it reads to its own service.
 
-The [user guide](docs/guide.md) has the details.
+The [security model](docs/security.md) has the details.
 
-## The skill for Claude
+## Docs
 
-`skill/dockyard-app/` is a skill for Claude. With it, Claude writes a ztk app in its sandbox, checks it with screenshots and clicks on the headless backend, and gives you program files to download. It works in Claude Code too (`.claude/skills/`).
-
-Make the zip with `tools/skill.sh`. The zip has the skill, the `dockyard` CLI (`new`, `run`, `check`, `build`), and the ztk programs of the six targets. On 2026-11-26, `tools/skill.sh` made a zip of 18,561,947 bytes. The upload limit is 30,000,000 bytes, and CI checks the size. Upload the zip in the Skills settings of Claude. Today only the Windows programs of the skill show a window (`skill/dockyard-app/SKILL.md` has the reason).
-
-## Limits
-
-- The terminal pane is not a sandbox. The program in it runs with the full power of your user. Read the [security model](docs/security.md).
-- The preview is a sandbox. It has the `file`, `channels`, and `clock` capabilities in the project folder, and no `exec` or `socket`.
-- Each change starts the app again, so the state of the app starts again.
-- CI builds and tests dockyard on Linux only.
-- A macOS program made on Linux or Windows has only the headless backend, and it shows no window. Build dockyard on a Mac for macOS apps.
-- The history pane is not in dockyard yet. [docs/dev/status.md](docs/dev/status.md) has the state of each step.
-
-## Links
-
-- [User guide](docs/guide.md)
-- [Security model](docs/security.md)
-- [FAQ](docs/faq.md)
-- [ztk](https://github.com/beetlebugorg/ztk), the GUI toolkit, and [ztcl](https://github.com/beetlebugorg/ztcl), the Tcl interpreter
-- [The plan](docs/dev/spec.md) and [the state of each step](docs/dev/status.md)
+- [Guide](docs/guide.md): the window, the preview, the MCP tools, Build, and the Apps window
+- [The sandbox](docs/sandbox.md) and [the monitor](docs/monitor.md)
+- [The skill for Claude](docs/skill.md)
+- [Security model](docs/security.md) and [FAQ](docs/faq.md)
+- [The plan](docs/dev/spec.md) and [the state of each part](docs/dev/status.md)
 
 ## Contact
 
-Write to [opensource@beetlebug.org](mailto:opensource@beetlebug.org) about dockyard, or open an [issue](https://github.com/beetlebugorg/dockyard/issues).
+Write to [opensource@beetlebug.org](mailto:opensource@beetlebug.org), or open an [issue](https://github.com/beetlebugorg/dockyard/issues).
 
 ## License
 

@@ -8,7 +8,17 @@ The terminal pane runs the agent program (or your shell) on a pseudo-terminal, a
 
 The agent program has its own permission prompts. Read them before you approve a command.
 
-A later version runs the program of the terminal pane in a small virtual machine, with only the project folder shared and a network proxy with an allow list (issue 13). Until that version, treat the pane as your own shell.
+`dockyard --sandbox` runs the program of the terminal pane in a small Linux virtual machine, with a network proxy and an allow list. It is a first form on x86-64 Linux: [the sandbox](sandbox.md) has what it can reach and what is not done. Without `--sandbox`, treat the pane as your own shell.
+
+## The sandbox and the monitor
+
+In a sandbox run:
+
+- The guest has its own kernel on the hypervisor (`ztcl::vm`). It has no network device.
+- A program of the guest reaches the network only through the egress proxy of dockyard, and only the hosts of the allow list: `api.anthropic.com`, `statsig.anthropic.com`, and `registry.npmjs.org` by default.
+- The proxy sees the host name of each HTTPS connection, and not its content.
+- The log of the [monitor](monitor.md) is outside the project folder, with mode 0600, so a program of the guest cannot change it.
+- The programs of the guest run as root in the guest, and the project folder is writable for them.
 
 ## The preview is a sandbox
 

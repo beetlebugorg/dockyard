@@ -10,7 +10,7 @@ No. Install it with `npm install -g @anthropic-ai/claude-code`. When the `PATH` 
 
 ## Which platforms does dockyard run on?
 
-CI builds and tests dockyard on Linux, with the headless backend. On Linux, the window uses Wayland. ztk has an AppKit backend for macOS. The macOS build of dockyard is not checked in CI.
+CI builds and tests dockyard on Linux for each pull request, and on Windows in the scheduled run. On Linux, the window uses Wayland. ztk has an AppKit backend for macOS and a Win32 backend for Windows. CI does not check the macOS build of dockyard.
 
 ## What language are the apps in?
 
@@ -27,6 +27,14 @@ You do. dockyard is under the AGPL, version 3, with an output exception (`LICENS
 ## Why does the preview start again after each change?
 
 A new run of `main.tcl` is the simplest way to show the current code. A reload with no restart is in the plan (`docs/dev/spec.md`, section 4).
+
+## Can I run Claude Code in a sandbox?
+
+`dockyard --sandbox DIR` runs the terminal pane in a small Linux virtual machine, with a network allow list. It is a first form on x86-64 Linux: the guest has no node yet, so it runs a shell, and the ztcl of this dockyard has no folder share on KVM yet. [The sandbox](sandbox.md) has the state.
+
+## Can I make apps without the dockyard window?
+
+Yes: the [skill for Claude](skill.md) builds the same apps in a chat with Claude, and gives you the program files.
 
 ## Can the app in the preview harm my computer?
 
