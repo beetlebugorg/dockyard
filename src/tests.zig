@@ -61,6 +61,8 @@ test {
     _ = @import("apps.zig");
     _ = @import("proxy.zig");
     _ = @import("guest_test.zig");
+    _ = @import("sandbox.zig");
+    _ = @import("guest_release.zig");
     _ = @import("monitor.zig");
     _ = @import("sock.zig");
 }

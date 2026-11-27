@@ -18,6 +18,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const ztcl = @import("ztcl");
+const Io = std.Io;
 
 pub const script = @embedFile("sandbox.tcl");
 
@@ -40,22 +41,21 @@ pub const arch = switch (builtin.cpu.arch) {
 
 /// Puts the guest files in `project/.dockyard/guest`. `exe` is the path
 /// of the dockyard program.
-pub fn prepare(a: std.mem.Allocator, project: []const u8, dir: []const u8, exe: []const u8) !Guest {
-    if (comptime builtin.os.tag == .windows) return error.Unsupported;
-    const out = try std.fmt.allocPrint(a, "{s}/.dockyard/guest", .{project});
-    try mkdirs(a, out);
-    try writeFile(a, try std.fmt.allocPrint(a, "{s}/.dockyard/.gitignore", .{project}), "*\n");
+pub fn prepare(a: std.mem.Allocator, io: Io, project: []const u8, dir: []const u8, exe: []const u8) !Guest {
+    const out = try std.fs.path.join(a, &.{ project, ".dockyard", "guest" });
+    try Io.Dir.cwd().createDirPath(io, out);
+    try writeFile(io, try std.fs.path.join(a, &.{ project, ".dockyard", ".gitignore" }), "*\n");
     const kernel = for (kernel_names) |k| {
-        if (exists(a, try std.fs.path.join(a, &.{ dir, k }))) break k;
+        if (readable(io, try std.fs.path.join(a, &.{ dir, k }))) break k;
     } else return error.NoKernel;
-    try place(a, try std.fs.path.join(a, &.{ dir, kernel }), out, kernel);
-    try place(a, try std.fs.path.join(a, &.{ dir, "agent.cpio" }), out, "agent.cpio");
+    try place(a, io, try std.fs.path.join(a, &.{ dir, kernel }), out, kernel);
+    try place(a, io, try std.fs.path.join(a, &.{ dir, "agent.cpio" }), out, "agent.cpio");
     const near = try std.fs.path.join(a, &.{ dir, "dockyard-guest" });
-    const helper = if (exists(a, near)) near else blk: {
+    const helper = if (readable(io, near)) near else blk: {
         const bin = std.fs.path.dirname(exe) orelse ".";
         break :blk try std.fs.path.join(a, &.{ bin, "..", "lib", "dockyard", "guest", arch, "dockyard-guest" });
     };
-    try place(a, helper, out, "dockyard-guest");
+    try place(a, io, helper, out, "dockyard-guest");
     return .{ .kernel = kernel };
 }
 
@@ -66,46 +66,51 @@ pub fn setVars(it: *ztcl.Interp, g: ?Guest, argv: []const u8, allow: []const u8)
     try it.setVar("::dockyard::sandbox_allow", .{ .str = allow });
 }
 
-fn z(a: std.mem.Allocator, p: []const u8) ![:0]const u8 {
-    return a.dupeSentinel(u8, p, 0);
+/// True when the file at `p` can be read.
+pub fn readable(io: Io, p: []const u8) bool {
+    Io.Dir.cwd().access(io, p, .{ .read = true }) catch return false;
+    return true;
 }
 
-fn exists(a: std.mem.Allocator, p: []const u8) bool {
-    const pz = z(a, p) catch return false;
-    return std.c.access(pz.ptr, 4) == 0;
+pub fn writeFile(io: Io, p: []const u8, data: []const u8) !void {
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = p, .data = data });
 }
 
-pub fn mkdirs(a: std.mem.Allocator, p: []const u8) !void {
-    var k: usize = 1;
-    while (k <= p.len) : (k += 1) {
-        if (k == p.len or p[k] == '/') _ = std.c.mkdir((try z(a, p[0..k])).ptr, 0o755);
+/// A copy of `src` as `dir/name`, with the permissions of `src`. The copy
+/// replaces an old file at once, so a guest never reads half of it.
+pub fn place(a: std.mem.Allocator, io: Io, src: []const u8, dir: []const u8, name: []const u8) !void {
+    const cwd = Io.Dir.cwd();
+    try cwd.copyFile(src, cwd, try std.fs.path.join(a, &.{ dir, name }), io, .{});
+}
+
+test "prepare puts copies of the guest files in the project" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena: std.heap.ArenaAllocator = .init(a);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    const root = try std.fs.path.join(ar, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    const dir = try std.fs.path.join(ar, &.{ root, "guest" });
+    const project = try std.fs.path.join(ar, &.{ root, "project" });
+    try tmp.dir.createDirPath(io, "guest");
+    try tmp.dir.createDirPath(io, "project");
+    try tmp.dir.writeFile(io, .{ .sub_path = "guest/bzImage", .data = "kernel" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "guest/agent.cpio", .data = "agent" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "guest/dockyard-guest", .data = "helper" });
+    const g = try prepare(ar, io, project, dir, "dockyard");
+    try std.testing.expectEqualStrings("bzImage", g.kernel);
+    for ([_][2][]const u8{ .{ "bzImage", "kernel" }, .{ "agent.cpio", "agent" }, .{ "dockyard-guest", "helper" } }) |f| {
+        const got = try tmp.dir.readFileAlloc(io, try std.fs.path.join(ar, &.{ "project", ".dockyard", "guest", f[0] }), ar, .limited(64));
+        try std.testing.expectEqualStrings(f[1], got);
     }
-}
-
-pub fn writeFile(a: std.mem.Allocator, p: []const u8, data: []const u8) !void {
-    const fd = std.c.open((try z(a, p)).ptr, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true, .CLOEXEC = true }, @as(std.c.mode_t, 0o644));
-    if (fd < 0) return error.AccessDenied;
-    defer _ = std.c.close(fd);
-    if (std.c.write(fd, data.ptr, data.len) != @as(isize, @intCast(data.len))) return error.InputOutput;
-}
-
-/// A copy of `src` as `dir/name`.
-pub fn place(a: std.mem.Allocator, src: []const u8, dir: []const u8, name: []const u8) !void {
-    const dst = try z(a, try std.fs.path.join(a, &.{ dir, name }));
-    const s = try z(a, src);
-    if (std.c.access(s.ptr, 4) != 0) return error.FileNotFound;
-    _ = std.c.unlink(dst.ptr);
-    const in = std.c.open(s.ptr, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, @as(std.c.mode_t, 0));
-    if (in < 0) return error.FileNotFound;
-    defer _ = std.c.close(in);
-    const out = std.c.open(dst.ptr, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true, .CLOEXEC = true }, @as(std.c.mode_t, 0o755));
-    if (out < 0) return error.AccessDenied;
-    defer _ = std.c.close(out);
-    var buf: [65536]u8 = undefined;
-    while (true) {
-        const n = std.c.read(in, &buf, buf.len);
-        if (n < 0) return error.InputOutput;
-        if (n == 0) return;
-        if (std.c.write(out, &buf, @intCast(n)) != n) return error.InputOutput;
-    }
+    try std.testing.expectEqualStrings("*\n", try tmp.dir.readFileAlloc(io, "project/.dockyard/.gitignore", ar, .limited(64)));
+    // A second start puts the new files in the place of the old ones.
+    try tmp.dir.writeFile(io, .{ .sub_path = "guest/agent.cpio", .data = "agent 2" });
+    _ = try prepare(ar, io, project, dir, "dockyard");
+    try std.testing.expectEqualStrings("agent 2", try tmp.dir.readFileAlloc(io, "project/.dockyard/guest/agent.cpio", ar, .limited(64)));
+    // A folder with no kernel.
+    try tmp.dir.createDirPath(io, "empty");
+    try std.testing.expectError(error.NoKernel, prepare(ar, io, project, try std.fs.path.join(ar, &.{ root, "empty" }), "dockyard"));
 }

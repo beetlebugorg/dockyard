@@ -196,16 +196,14 @@ pub fn main(init: std.process.Init) !void {
             .dark = dark,
         });
         const sandbox_abs = if (sandbox_dir) |d| try std.fs.path.resolve(arena, &.{ cwd, d }) else null;
-        const release = if (sandbox_abs) |d| if (guest_release.isRelease(arena, d)) guest_release.prepare(arena, folder, d) catch |e|
+        const release = if (sandbox_abs) |d| if (guest_release.isRelease(arena, io, d)) guest_release.prepare(arena, io, folder, d) catch |e|
             fail(err, "dockyard: the guest release in {s}: {s}\n", .{ d, @errorName(e) }) else null else null;
-        const guest = if (release != null) sandbox.Guest{ .kernel = "" } else if (sandbox_abs) |d| sandbox.prepare(arena, folder, d, try std.process.executablePathAlloc(io, arena)) catch |e|
-            fail(err, "dockyard: no guest files in {s}: {s}\n", .{ d, @errorName(e) })
-        else
-            null;
+        const guest = if (release != null) sandbox.Guest{ .kernel = "" } else if (sandbox_abs) |d| sandbox.prepare(arena, io, folder, d, try std.process.executablePathAlloc(io, arena)) catch |e|
+            fail(err, "dockyard: no guest files in {s}: {s}\n", .{ d, @errorName(e) }) else null;
         try sandbox.setVars(&it, guest, sandbox_argv, sandbox.default_allow);
         try guest_release.setVars(&it, release);
         it.vm_host.image_keys = guest_release.keys;
-        it.vm_host.image_store = guest_release.store(arena);
+        it.vm_host.image_store = guest_release.store(arena, init.environ_map);
         try monitor.register(&it, try host.controlPath(arena, runtime, folder));
         try it.setVar("::dockyard::tui", .{ .str = if (tui) "1" else "0" });
     }
