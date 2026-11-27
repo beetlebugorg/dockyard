@@ -447,26 +447,30 @@ test "the Build button makes the program of this computer, and the app list show
     try std.testing.expect(std.mem.indexOf(u8, rows, program) != null);
 }
 
-test "the Activity view groups the events by turn and filters them" {
+test "the Activity view groups the records by turn and filters them" {
     var r: Run = .{ .arena = .init(std.testing.allocator) };
     try r.start(test_shell, "label .l -text hi\npack .l\n");
     defer r.stop();
     _ = try r.eval(
         \\set t [clock milliseconds]
         \\::dockyard::activity::add [list \
-        \\    [list kind hook time $t event UserPromptSubmit prompt "Make a timer"] \
-        \\    [list kind hook time $t event PreToolUse tool Write path /work/main.tcl] \
-        \\    [list kind net time $t host example.com port 443 result blocked up 0 down 0 ms 0] \
-        \\    [list kind exec time $t pid 12 ppid 1 argv {wget example.com}]]
+        \\    [list seq 1 kind turn time $t turn s.1 data {op start prompt "Make a timer"}] \
+        \\    [list seq 2 kind tool time $t turn s.1 call c1 data {op start tool Write input {path /work/main.tcl}}] \
+        \\    [list seq 3 kind tool time $t turn s.1 call c1 data {op end tool Write ok true}] \
+        \\    [list seq 4 kind net time $t turn s.1 data {host example.com port 443 result blocked}] \
+        \\    [list seq 5 kind exec time $t turn s.1 data {pid 12 argv {wget example.com}}] \
+        \\    [list seq 6 kind exit time $t turn s.1 data {pid 12 code 1}]]
     );
-    // A turn row and three event rows: the prompt is the head of the turn.
+    // A turn row and three rows: the prompt is the head of the turn, and
+    // the end of the tool call and the exit go into the rows of their start.
     try std.testing.expectEqualStrings("{turn 1} {event 1} {event 2} {event 3}", try r.eval("set ::dockyard::activity::rows"));
+    try std.testing.expectEqualStrings("{wget example.com} {exit 1}", try r.eval("::dockyard::activity::summary [lindex $::dockyard::activity::events 3] exec"));
     _ = try r.eval("::dockyard::activity::filter blocked");
     try std.testing.expectEqualStrings("{turn 1} {event 2}", try r.eval("set ::dockyard::activity::rows"));
     try std.testing.expectEqualStrings("1 blocked", try r.eval(".sb.blocked.t cget -text"));
     _ = try r.eval("::dockyard::activity::filter all; set ::dockyard::activity::query wget; ::dockyard::activity::refilter");
     try std.testing.expectEqualStrings("{turn 1} {event 3}", try r.eval("set ::dockyard::activity::rows"));
-    // The detail of the blocked event, and a fold of the turn.
+    // The detail of the blocked record, and a fold of the turn.
     _ = try r.eval("::dockyard::activity::detail 2");
     try std.testing.expectEqualStrings("Blocked connection", try r.eval(".activity.detail.h.t cget -text"));
     _ = try r.eval("set ::dockyard::activity::query {}; set ::dockyard::activity::folded 1; ::dockyard::activity::refilter");

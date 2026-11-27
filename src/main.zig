@@ -57,6 +57,7 @@ const usage =
     \\  --exit-after-ms N        exit N ms after the start
     \\  --screenshot FILE.png    with --headless: write the last frame at the exit
     \\  --view NAME              open the view workspace, activity, or apps
+    \\  --audit-import FILE      add the records of FILE (a Tcl dict on each line) to the audit log
     \\
 ;
 
@@ -110,6 +111,7 @@ pub fn main(init: std.process.Init) !void {
     var exit_ms: ?u64 = null;
     var screenshot: ?[]const u8 = null;
     var view: []const u8 = "workspace";
+    var audit_import: []const u8 = "";
     var agent_flag: ?[]const u8 = null;
     var project: ?[]const u8 = null;
     var run_file: ?[]const u8 = null;
@@ -154,6 +156,9 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, a, "--exit-after-ms") and has_value) {
             i += 1;
             exit_ms = std.fmt.parseInt(u64, args[i], 10) catch fail(err, "dockyard: bad time\n", .{});
+        } else if (std.mem.eql(u8, a, "--audit-import") and has_value) {
+            i += 1;
+            audit_import = args[i];
         } else if (std.mem.eql(u8, a, "--view") and has_value) {
             i += 1;
             view = args[i];
@@ -215,6 +220,7 @@ pub fn main(init: std.process.Init) !void {
             .dark = dark,
         });
         try it.setVar("::dockyard::view", .{ .str = view });
+        try it.setVar("::dockyard::audit_import", .{ .str = audit_import });
         const sandbox_abs = if (sandbox_dir) |d| try std.fs.path.resolve(arena, &.{ cwd, d }) else null;
         const release = if (sandbox_abs) |d| if (guest_release.isRelease(arena, io, d)) guest_release.prepare(arena, io, folder, d) catch |e|
             fail(err, "dockyard: the guest release in {s}: {s}\n", .{ d, @errorName(e) }) else null else null;

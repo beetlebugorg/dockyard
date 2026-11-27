@@ -1,24 +1,28 @@
 # The Activity view (docs/dev/design.md): each action of the agent
-# program, for an audit. The events come from the log of the monitor
-# (`dockyard::monitor read`, the same file that `dockyard --monitor`
-# reads), every 250 ms. A UserPromptSubmit hook starts a turn, and the
-# events after it go into that turn.
+# program, for an audit. The records come from the audit log of the
+# project (`dockyard::audit query`, docs/dev/audit.md), every 250 ms.
+# The `turn` field of a record puts it into a turn, and the `turn`
+# record with op start has the prompt.
 #
 # The timeline is a canvas that renders only the rows in view. The
-# events stay in lists: `events` (the dicts), `kinds` (the kind of each
-# event), `turns` (its turn), and `texts` (a lowercase text for the
-# search). A change of the filter, the search, or a fold makes `rows`,
-# a list of row entries ({turn N} or {event I}), and no widgets. A
-# scroll or a change deletes the canvas items and makes the items of
-# the rows in view again.
+# records stay in lists: `events` (the dicts), `kinds` (the kind of each
+# row), `turns` (the number of its turn), and `texts` (a lowercase text
+# for the search). The end of a tool call and the exit of a program go
+# into the row of their start (`results`), so they make no rows. A
+# change of the filter, the search, or a fold makes `rows`, a list of
+# row entries ({turn N} or {event I}), and no widgets. A scroll or a
+# change deletes the canvas items and makes the items of the rows in
+# view again.
 
 namespace eval ::dockyard::activity {
-    variable offset 0
+    variable last 0
     variable events {}
     variable kinds {}
     variable turns {}
     variable texts {}
     variable prompts {}
+    variable turnIds {}
+    variable results {}
     variable rows {}
     variable top 0
     variable selected -1
@@ -32,91 +36,126 @@ namespace eval ::dockyard::activity {
     variable rowh 30
 }
 
-# The kind of an event for the filter: prompt, tool, exec, file, net,
-# blocked, dns, build, or other.
+proc ::dockyard::activity::Get {d k} {
+    expr {[dict exists $d $k] ? [dict get $d $k] : ""}
+}
+
+# The kind of a record for the filter: prompt, tool, exec, file, net,
+# blocked, dns, build, or other. An empty kind makes no row.
 proc ::dockyard::activity::kindOf {e} {
+    set d [Get $e data]
     switch -- [dict get $e kind] {
-        hook {
-            set ev [expr {[dict exists $e event] ? [dict get $e event] : ""}]
-            if {$ev eq "UserPromptSubmit"} {return prompt}
-            if {$ev in {PreToolUse PostToolUse}} {
-                if {[dict exists $e tool] && [dict get $e tool] eq "Bash"} {return exec}
-                if {[dict exists $e tool] && [dict get $e tool] in {Read Write Edit MultiEdit NotebookEdit}} {return file}
-                return tool
-            }
-            return other
+        turn {return [expr {[Get $d op] eq "start" ? "prompt" : ""}]}
+        tool {
+            if {[Get $d op] ne "start"} {return ""}
+            set t [Get $d tool]
+            if {$t eq "Bash"} {return exec}
+            if {$t in {Read Write Edit MultiEdit NotebookEdit}} {return file}
+            return tool
         }
         exec {return exec}
+        exit {return ""}
         file {return file}
-        net {return [expr {[dict exists $e result] && [dict get $e result] eq "blocked" ? "blocked" : "net"}]}
-        dns {return dns}
-        build {return build}
+        net {return [expr {[Get $d result] eq "allowed" ? "net" : "blocked"}]}
+        dns {return [expr {[Get $d result] eq "blocked" ? "blocked" : "dns"}]}
+        blocked {
+            # A blocked net or dns record has its own row.
+            return [expr {[Get $d what] in {net dns} ? "" : "blocked"}]
+        }
+        build {return [expr {[Get $d op] eq "end" ? "build" : ""}]}
     }
     return other
 }
 
-# The text of a row: the kind name, the summary, and the badge.
+# The summary and the badge of a row.
 proc ::dockyard::activity::summary {e k} {
-    set f [dict create {*}$e]
-    set get {apply {{f n} {expr {[dict exists $f $n] ? [dict get $f $n] : ""}}}}
-    switch -- [dict get $f kind] {
-        hook {
+    variable results
+    set d [Get $e data]
+    switch -- [dict get $e kind] {
+        turn {return [list [Get $d prompt] ""]}
+        tool {
             # A tool of an MCP server has the name mcp__SERVER__TOOL.
-            regsub {^mcp__[^_]+__} [{*}$get $f tool] "" tool
-            set arg ""
-            foreach n {path command pattern url prompt} {
-                if {[{*}$get $f $n] ne ""} {set arg [{*}$get $f $n]; break}
+            regsub {^mcp__[^_]+__} [Get $d tool] "" tool
+            set in [Get $d input]
+            set arg [expr {[dict size $in] > 0 ? [lindex $in 1] : ""}]
+            set badge ""
+            set call [Get $e call]
+            if {$call ne "" && [dict exists $results call:$call]} {
+                set badge [expr {[Get [dict get $results call:$call] ok] in {0 false} ? "failed" : "done"}]
             }
-            set badge [expr {[{*}$get $f event] eq "PostToolUse" ? "done" : [{*}$get $f event] eq "PreToolUse" ? "" : [{*}$get $f event]}]
-            if {[dict exists $f exit]} {set badge "exit [dict get $f exit]"}
             return [list [string trim "$tool [string map {/work/ {}} $arg]"] $badge]
         }
         exec {
-            set badge [expr {[dict exists $f exit] ? "exit [dict get $f exit]" : "pid [{*}$get $f pid]"}]
-            return [list [join [{*}$get $f argv]] $badge]
+            set badge ""
+            set pid [Get $d pid]
+            if {[dict exists $results pid:$pid]} {set badge "exit [Get [dict get $results pid:$pid] code]"}
+            return [list [join [Get $d argv]] $badge]
         }
-        exit {return [list "end of [{*}$get $f pid]" ""]}
-        file {return [list "[{*}$get $f op] [{*}$get $f path]" ""]}
+        file {return [list "[Get $d op] [Get $d path]" ""]}
         net {
-            set badge [expr {$k eq "blocked" ? "blocked" : [format "%.1f KB" [expr {([{*}$get $f up] + 0 + [{*}$get $f down] + 0) / 1024.0}]]}]
-            return [list "[{*}$get $f host]:[{*}$get $f port]" $badge]
+            set badge [expr {$k eq "blocked" ? "blocked" : [format "%.1f KB" [expr {([Get $d up] + 0 + [Get $d down] + 0) / 1024.0}]]}]
+            return [list "[Get $d host]:[Get $d port]" $badge]
         }
-        dns {return [list [{*}$get $f name] [{*}$get $f answer]]}
-        build {return [list [{*}$get $f status] ""]}
-        share {return [list "[{*}$get $f op] [{*}$get $f name]" ""]}
-        rule {return [list "[{*}$get $f rule] [{*}$get $f host]" ""]}
+        dns {return [list "[Get $d name] [Get $d type]" [expr {$k eq "blocked" ? "blocked" : [join [Get $d answers]]}]]}
+        blocked {return [list "[Get $d what] [Get $d target]" blocked]}
+        build {return [list "[join [Get $d targets] {, }]" [expr {[Get $d ok] in {0 false} ? "failed" : "built"}]]}
+        share {return [list "[Get $d op] [Get $d name]" ""]}
+        rule {return [list "[Get $d op] [Get $d host]" ""]}
+        session {return [list "session [Get $d op] [join [Get $d argv]]" ""]}
+        note {return [list [Get $d text] ""]}
     }
-    return [list [string range $e 0 120] ""]
+    return [list [string range $d 0 120] ""]
 }
 
-# Reads the events of the log since the last read, every 250 ms.
+# Reads the new records of the audit log every 250 ms.
 proc ::dockyard::activity::poll {} {
-    variable offset
-    if {![catch {::dockyard::monitor read $offset} r]} {
-        lassign $r offset lines
-        add $lines
+    variable last
+    if {[info commands ::dockyard::audit] ne ""} {
+        set opts [expr {$last == 0 ? {-last 50000} : [list -after $last]}]
+        if {![catch {::dockyard::audit query {*}$opts} recs] && $recs ne ""} {
+            set last [dict get [lindex $recs end] seq]
+            add $recs
+        }
     }
     after 250 ::dockyard::activity::poll
 }
 
-# Adds events (dicts) to the lists, and makes the rows again.
-proc ::dockyard::activity::add {lines} {
+# Adds records (dicts) to the lists, and makes the rows again.
+proc ::dockyard::activity::add {recs} {
     variable events
     variable kinds
     variable turns
     variable texts
     variable prompts
+    variable turnIds
+    variable results
     variable counts
     set added 0
-    foreach e $lines {
+    foreach e $recs {
         if {[catch {dict size $e}] || ![dict exists $e kind] || ![dict exists $e time]} continue
+        set d [Get $e data]
+        # The end of a tool call and the exit of a program give the
+        # badge of the row of their start.
+        if {[dict get $e kind] eq "tool" && [Get $d op] eq "end" && [Get $e call] ne ""} {
+            dict set results call:[Get $e call] $d
+            incr added
+            continue
+        }
+        if {[dict get $e kind] eq "exit"} {
+            dict set results pid:[Get $d pid] $d
+            incr added
+            continue
+        }
         set k [kindOf $e]
-        if {$k eq "prompt"} {
-            lappend prompts [list [llength $events] [expr {[dict exists $e prompt] ? [dict get $e prompt] : ""}] [dict get $e time]]
+        if {$k eq ""} continue
+        set tid [Get $e turn]
+        if {$k eq "prompt" && $tid ne "" && ![dict exists $turnIds $tid]} {
+            lappend prompts [list [llength $events] [Get $d prompt] [dict get $e time]]
+            dict set turnIds $tid [llength $prompts]
         }
         lappend events $e
         lappend kinds $k
-        lappend turns [llength $prompts]
+        lappend turns [expr {$tid ne "" && [dict exists $turnIds $tid] ? [dict get $turnIds $tid] : 0}]
         lappend texts [string tolower [join [summary $e $k]]]
         incr counts($k)
         incr counts(all)
@@ -130,23 +169,19 @@ proc ::dockyard::activity::add {lines} {
 # blocked attempts.
 proc ::dockyard::activity::status {e k} {
     variable counts
-    if {[dict get $e kind] eq "hook" && [dict exists $e event] && [dict get $e event] eq "PreToolUse"} {
+    if {[dict get $e kind] eq "tool"} {
         ::dockyard::ui::status agent bolt accent "Agent: [lindex [summary $e $k] 0]" accent
     }
     if {$k eq "blocked"} {
         if {![winfo exists .sb.blocked]} {
             ::ui::statusItem .sb.blocked blocked danger "" danger
-            pack .sb.blocked -side right -padx {18 0}
+            pack .sb.blocked -side right -padx {0 18}
             foreach w {.sb.blocked .sb.blocked.t .sb.blocked.i} {
                 bind $w <ButtonPress-1> {::dockyard::activity::filter blocked; ::dockyard::ui::go activity}
             }
         }
         .sb.blocked.t configure -text "$counts(blocked) blocked"
     }
-}
-
-proc ::dockyard::activity::note {kind d} {
-    catch {::dockyard::monitor log [dict merge [list kind $kind time [clock milliseconds]] $d]}
 }
 
 # Makes the list of rows from the filter, the search, the time range,
@@ -190,7 +225,27 @@ proc ::dockyard::activity::counts {} {
         .activity.bar.k.$k configure -text "$t $n"
     }
     set n [expr {[info exists counts(all)] ? $counts(all) : 0}]
-    .activity.list.foot.t configure -text "[fmt $n] events in the log. The log has no signed records on this system."
+    variable chain
+    set text "[fmt $n] events. $chain"
+    .activity.list.foot.t configure -text $text
+}
+
+# Checks the hash chain of the log every 30 s. The check reads the whole
+# log, so it does not run for each new record.
+variable ::dockyard::activity::chain ""
+proc ::dockyard::activity::verify {} {
+    variable chain
+    if {[info commands ::dockyard::audit] ne "" && ![catch {::dockyard::audit verify} v]} {
+        if {[dict get $v ok]} {
+            set chain "The hash chain of [fmt [dict get $v records]] records is intact. The records are not signed yet."
+            .activity.list.foot.i configure -image [::ui::icon shieldcheck ok]
+        } else {
+            set chain "The hash chain breaks at record [dict get $v bad]: [dict get $v reason]."
+            .activity.list.foot.i configure -image [::ui::icon blocked danger]
+        }
+        counts
+    }
+    after 30000 ::dockyard::activity::verify
 }
 
 # 37413 gives 37,413.
@@ -315,7 +370,10 @@ proc ::dockyard::activity::detail {i} {
     variable kinds
     variable turns
     variable prompts
+    variable results
     set e [lindex $events $i]
+    set data [Get $e data]
+    set host [expr {[Get $data host] ne "" ? [Get $data host] : [Get $data name] ne "" ? [Get $data name] : [Get $data target]}]
     set k [lindex $kinds $i]
     set d .activity.detail
     foreach c [winfo children $d] {destroy $c}
@@ -330,7 +388,7 @@ proc ::dockyard::activity::detail {i} {
     if {$k eq "blocked"} {
         frame $d.ban -padx 12 -pady 10
         ztk::class $d.ban add banner
-        label $d.ban.t -text "[dict get $e host] is not on the allow list of the sandbox. The proxy closed the connection." -wraplength 380 -justify left -anchor w
+        label $d.ban.t -text "$host is not on the allow list of the sandbox. The connection was closed before any byte went out." -wraplength 380 -justify left -anchor w
         ztk::class $d.ban.t add danger
         pack $d.ban.t -fill x
         pack $d.ban -fill x -pady {12 0}
@@ -340,13 +398,25 @@ proc ::dockyard::activity::detail {i} {
     set t [lindex $turns $i]
     set fields [list Time [clock format [expr {[dict get $e time] / 1000}] -format "%Y-%m-%d %H:%M:%S"].[format %03d [expr {[dict get $e time] % 1000}]]]
     if {$t > 0} {lappend fields Turn "$t: [string range [lindex $prompts [expr {$t - 1}] 1] 0 60]"}
-    dict for {key v} $e {
-        if {$key in {kind time type}} continue
-        lappend fields [string totitle $key] [string range [expr {$key eq "argv" ? [join $v] : $v}] 0 300]
+    # The fields of the data, then the end of a tool call or the exit of
+    # a program, then the place of the record in the chain.
+    set more {}
+    if {[Get $e call] ne "" && [dict exists $results call:[Get $e call]]} {set more [dict get $results call:[Get $e call]]}
+    if {[dict get $e kind] eq "exec" && [dict exists $results pid:[Get $data pid]]} {set more [dict get $results pid:[Get $data pid]]}
+    set out ""
+    foreach part [list $data $more] {
+        dict for {key v} $part {
+            if {$key in {output diff}} {
+                if {$v ne "" && $v ne "null"} {append out $v \n}
+                continue
+            }
+            if {$key eq "input" || $key eq "argv"} {set v [join $v]}
+            lappend fields [string totitle $key] [string range $v 0 300]
+        }
     }
-    if {![dict exists $e exit] && $k eq "exec"} {lappend fields "Exit code" "not recorded"}
-    if {$k eq "file" && ![dict exists $e diff]} {lappend fields Diff "not recorded"}
-    lappend fields Record "not signed"
+    if {$k eq "exec" && $more eq ""} {lappend fields "Exit code" "not recorded"}
+    if {$k eq "file" && ![dict exists $data diff]} {lappend fields Diff "not recorded"}
+    lappend fields Source [Get $e source] Record "[Get $e seq], after [string range [Get $e prev] 0 15]" Signature "not signed yet"
     set r 0
     foreach {key v} $fields {
         label $d.f.k$r -text $key -anchor nw
@@ -357,8 +427,7 @@ proc ::dockyard::activity::detail {i} {
         incr r
     }
     pack $d.f -fill x -pady {12 0}
-    if {[dict exists $e output] || [dict exists $e diff]} {
-        set out [expr {[dict exists $e diff] ? [dict get $e diff] : [dict get $e output]}]
+    if {$out ne ""} {
         text $d.out -height 10 -wrap none -font TkFixedFont
         ztk::class $d.out add code
         $d.out insert end $out
@@ -366,7 +435,7 @@ proc ::dockyard::activity::detail {i} {
         pack $d.out -fill both -expand 1 -pady {12 0}
     }
     if {$k eq "blocked" && [info exists ::dockyard::sandbox] && $::dockyard::sandbox ne ""} {
-        ttk::button $d.allow -text "Allow [dict get $e host]" -style Ghost.TButton -command [list ::dockyard::activity::allow [dict get $e host]]
+        ttk::button $d.allow -text "Allow $host" -style Ghost.TButton -command [list ::dockyard::activity::allow $host]
         pack $d.allow -side bottom -anchor w
     }
 }
@@ -408,7 +477,13 @@ proc ::dockyard::activity::export {format} {
         }
         set e [lindex $events $id]
         if {$format eq "jsonl"} {
-            puts $f "\{[join [lmap {k v} $e {string cat [json $k] : [json $v]}] ,]\}"
+            # The line of the log as it is, with its hash chain field.
+            set seq [Get $e seq]
+            if {$seq ne "" && ![catch {::dockyard::audit query -after [expr {$seq - 1}] -limit 1 -format json} line]} {
+                puts $f [lindex $line 0]
+            } else {
+                puts $f "\{[join [lmap {k v} $e {string cat [json $k] : [json $v]}] ,]\}"
+            }
         } else {
             lassign [summary $e [lindex $kinds $id]] text badge
             puts $f "| [clock format [expr {[dict get $e time] / 1000}] -format %H:%M:%S] | [lindex $kinds $id] | `[string map {| \\|} $text]` | $badge |"
@@ -423,7 +498,7 @@ proc ::dockyard::activity::build {} {
     set w .activity
     frame $w.bar
     ztk::class $w.bar add body
-    entry $w.bar.q -width 26 -placeholder "Search commands, files, hosts (Ctrl+F)" -textvariable ::dockyard::activity::query
+    entry $w.bar.q -width 22 -placeholder "Search (Ctrl+F)" -textvariable ::dockyard::activity::query
     ztk::class $w.bar.q add search
     bind $w.bar.q <KeyRelease> {
         after cancel $::dockyard::activity::pending
@@ -486,9 +561,26 @@ proc ::dockyard::activity::shown {} {
     after idle ::dockyard::activity::render
 }
 
+# `--audit-import FILE` adds sample records to the log before the first
+# read (tools/screenshots.sh). FILE is a path in the project folder, with
+# one dict on each line: kind, data, and the options turn, call, source,
+# and time.
+if {[info exists ::dockyard::audit_import] && $::dockyard::audit_import ne ""} {
+    set f [open /$::dockyard::audit_import]
+    foreach line [split [read $f] \n] {
+        if {[string trim $line] eq ""} continue
+        set opts {}
+        foreach o {turn call source time} {
+            if {[dict exists $line $o]} {lappend opts -$o [dict get $line $o]}
+        }
+        catch {::dockyard::audit log [dict get $line kind] [dict get $line data] {*}$opts}
+    }
+    close $f
+}
 ::dockyard::activity::build
 ::dockyard::activity::refilter
 ::dockyard::activity::poll
+::dockyard::activity::verify
 # `--view NAME` opens a view at the start.
 if {[info exists ::dockyard::view] && $::dockyard::view in {activity apps}} {
     after idle [list ::dockyard::ui::go $::dockyard::view]
