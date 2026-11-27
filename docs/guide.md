@@ -1,5 +1,7 @@
 # User guide
 
+![dockyard with a tip calculator in the preview pane](images/dockyard-light.png)
+
 This guide tells you how to use dockyard. dockyard is a desktop app. You chat with an agent program in a terminal pane, and the agent program writes a ztk app. The preview pane shows the app while the agent program writes it.
 
 ## Start dockyard
@@ -22,6 +24,10 @@ The flags:
 | `--exit-after-frames N` | Exits after `N` frames. |
 | `--exit-after-ms N` | Exits `N` ms after the start. |
 | `--screenshot FILE.png` | With `--headless`: writes the last frame to `FILE.png` at the exit. |
+| `--sandbox DIR` | Runs the terminal pane in a guest of `ztcl::vm`, with the kernel and the agent of DIR. See [the sandbox](sandbox.md). |
+| `--sandbox-command LIST` | The program of the pane in the guest. The default is `/bin/busybox sh -l`. |
+| `--monitor` | Opens the [monitor](monitor.md) of the project in place of the window. With `--tui`, it writes the events to the terminal. |
+| `--mcp` | Serves the MCP tools on stdin and stdout. The agent program starts it from `.mcp.json`. |
 
 ## The window
 
