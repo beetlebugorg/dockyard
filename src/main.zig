@@ -31,6 +31,7 @@ const mcp = @import("mcp.zig");
 const apps = @import("apps.zig");
 const proxy = @import("proxy.zig");
 const sandbox = @import("sandbox.zig");
+const guest_release = @import("guest_release.zig");
 const monitor = @import("monitor.zig");
 const monitor_script = @embedFile("monitor.tcl");
 
@@ -194,11 +195,17 @@ pub fn main(init: std.process.Init) !void {
             .headless = headless,
             .dark = dark,
         });
-        const guest = if (sandbox_dir) |d| sandbox.prepare(arena, folder, try std.fs.path.resolve(arena, &.{ cwd, d }), try std.process.executablePathAlloc(io, arena)) catch |e|
+        const sandbox_abs = if (sandbox_dir) |d| try std.fs.path.resolve(arena, &.{ cwd, d }) else null;
+        const release = if (sandbox_abs) |d| if (guest_release.isRelease(arena, d)) guest_release.prepare(arena, folder, d) catch |e|
+            fail(err, "dockyard: the guest release in {s}: {s}\n", .{ d, @errorName(e) }) else null else null;
+        const guest = if (release != null) sandbox.Guest{ .kernel = "" } else if (sandbox_abs) |d| sandbox.prepare(arena, folder, d, try std.process.executablePathAlloc(io, arena)) catch |e|
             fail(err, "dockyard: no guest files in {s}: {s}\n", .{ d, @errorName(e) })
         else
             null;
         try sandbox.setVars(&it, guest, sandbox_argv, sandbox.default_allow);
+        try guest_release.setVars(&it, release);
+        it.vm_host.image_keys = guest_release.keys;
+        it.vm_host.image_store = guest_release.store(arena);
         try monitor.register(&it, try host.controlPath(arena, runtime, folder));
         try it.setVar("::dockyard::tui", .{ .str = if (tui) "1" else "0" });
     }

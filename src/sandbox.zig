@@ -75,14 +75,14 @@ fn exists(a: std.mem.Allocator, p: []const u8) bool {
     return std.c.access(pz.ptr, 4) == 0;
 }
 
-fn mkdirs(a: std.mem.Allocator, p: []const u8) !void {
+pub fn mkdirs(a: std.mem.Allocator, p: []const u8) !void {
     var k: usize = 1;
     while (k <= p.len) : (k += 1) {
         if (k == p.len or p[k] == '/') _ = std.c.mkdir((try z(a, p[0..k])).ptr, 0o755);
     }
 }
 
-fn writeFile(a: std.mem.Allocator, p: []const u8, data: []const u8) !void {
+pub fn writeFile(a: std.mem.Allocator, p: []const u8, data: []const u8) !void {
     const fd = std.c.open((try z(a, p)).ptr, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true, .CLOEXEC = true }, @as(std.c.mode_t, 0o644));
     if (fd < 0) return error.AccessDenied;
     defer _ = std.c.close(fd);
@@ -90,7 +90,7 @@ fn writeFile(a: std.mem.Allocator, p: []const u8, data: []const u8) !void {
 }
 
 /// A copy of `src` as `dir/name`.
-fn place(a: std.mem.Allocator, src: []const u8, dir: []const u8, name: []const u8) !void {
+pub fn place(a: std.mem.Allocator, src: []const u8, dir: []const u8, name: []const u8) !void {
     const dst = try z(a, try std.fs.path.join(a, &.{ dir, name }));
     const s = try z(a, src);
     if (std.c.access(s.ptr, 4) != 0) return error.FileNotFound;

@@ -6,6 +6,7 @@
 #                         tree after the data
 #   out/ARCH-tools.json   the disk entry for manifest.sh
 #   out/ARCH-packages.txt the Alpine packages and their versions
+# COMP is the compression of the squashfs: gzip (default) or xz.
 # Needs Zig 0.17.0 for the helper. The image of Alpine and the archive of
 # Zig are pinned by SHA-256.
 set -eu
@@ -37,7 +38,7 @@ cp "$here/rootfs.sh" "$work/in/rootfs.sh"
 # A fixed salt keeps the build reproducible.
 salt=$(printf 'dockyard-tools-%s' "$arch" | sha256sum | cut -c1-64)
 docker run --rm --platform "$platform" -v "$work/in:/in:ro" -v "$work/out:/out" "$alpine" \
-    sh /in/rootfs.sh "$arch" "$zig_sha" "$salt"
+    sh /in/rootfs.sh "$arch" "$zig_sha" "$salt" "${COMP:-gzip}"
 hash=$(sed -n 's/^Root hash:[[:space:]]*//p' "$work/out/verity.txt")
 [ ${#hash} -eq 64 ] || { echo "no root hash" >&2; exit 1; }
 blocks=$(cat "$work/out/blocks.txt")

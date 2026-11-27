@@ -4,7 +4,7 @@
 # (checked by SHA-256) and the guest helper, then makes the squashfs and
 # its dm-verity hash tree in /out. The inputs are in /in.
 set -eu
-arch=$1 zig_sha=$2 salt=$3
+arch=$1 zig_sha=$2 salt=$3 comp=${4:-gzip}
 apk add -q squashfs-tools cryptsetup
 mkdir -p /rootfs/etc/apk
 cp -r /etc/apk/keys /rootfs/etc/apk/
@@ -41,10 +41,16 @@ install -m 755 /in/dockyard-guest /rootfs/usr/libexec/dockyard/dockyard-guest
 rm -rf /rootfs/var/cache/apk/* /rootfs/lib/apk/db/scripts.tar* /rootfs/var/log/apk.log \
     /rootfs/usr/share/man /rootfs/usr/share/doc
 rm -f /out/tools.img
-# Blocks of 1 MiB and the branch filter of the architecture make the disk
-# about 12% smaller than blocks of 128 KiB without a filter.
-case $arch in x86_64) bcj=x86 ;; arm64) bcj=arm64 ;; esac
-mksquashfs /rootfs /out/tools.img -noappend -all-root -no-xattrs -comp xz -b 1M -Xbcj $bcj \
+# The compression is gzip by default, since the guest kernel of ztcl has
+# the zlib decompressor of squashfs only. comp=xz makes the disk about 27%
+# smaller, with blocks of 1 MiB and the branch filter of the architecture,
+# for a kernel with CONFIG_SQUASHFS_XZ.
+case $comp in
+    xz) case $arch in x86_64) opts="-comp xz -Xbcj x86" ;; arm64) opts="-comp xz -Xbcj arm64" ;; esac ;;
+    gzip) opts="-comp gzip -Xcompression-level 9" ;;
+    *) echo "comp must be gzip or xz" >&2; exit 2 ;;
+esac
+mksquashfs /rootfs /out/tools.img -noappend -all-root -no-xattrs -b 1M $opts \
     -mkfs-time 0 -all-time 0 -reproducible -quiet -no-progress
 # The data fills whole blocks of 4,096 bytes, and the tree starts after it.
 size=$(stat -c %s /out/tools.img)

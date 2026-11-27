@@ -15,17 +15,25 @@
 #   sandbox::events VM SCRIPT   Calls SCRIPT with a dict for each program that starts or ends,
 #                               and for each hook call of the agent program.
 #   sandbox::hooks VM HOME      Writes the hook settings of the agent program in HOME of the guest.
+#   sandbox::path VM PATH       Gives the path in the guest of PATH of the pane.
 
 namespace eval ::dockyard::sandbox {
     variable port_session 7100
-    variable port_control 7101
-    variable port_data 7102
+    variable port_relay 7101
     variable port_events 7103
     # The state of each session: the channel, the bytes that wait, and
     # the scripts.
     variable sessions
     array set sessions {}
     variable next 0
+    # The root of the pane in each guest, and the path of the helper in
+    # that root. A guest of -image runs the pane in a chroot of the tools
+    # disk.
+    variable roots
+    array set roots {}
+    # The guests whose relay port goes to the proxy.
+    variable relays
+    array set relays {}
 }
 
 proc ::dockyard::sandbox::Frame {ch type payload} {
@@ -44,41 +52,99 @@ proc ::dockyard::sandbox::List {l} {
     return $out
 }
 
+# The folder of the tools disk in the guest. The root disk of the guest
+# is read-only, and /tmp is a tmpfs.
+variable ::dockyard::sandbox::tools_root /tmp/tools
+
+# Mounts the tools disk (/dev/dm-1, a squashfs with dm-verity) at $1 and
+# the folders of the pane in it, then starts the helper of the disk in a
+# chroot. /inbox of the pane is a tmpfs for the files that the host
+# shares. $2 is the folder of the share in the pane, or empty. $3 is
+# the relay port of the host. /tmp and
+# /root of the pane are tmpfs, since the disk is read-only.
+variable ::dockyard::sandbox::tools_mount {
+    set -e
+    b=/bin/busybox
+    $b mkdir -p "$1"
+    $b mount -t squashfs -o ro /dev/dm-1 "$1"
+    $b mount -t proc proc "$1/proc"
+    $b mount -o rbind /dev "$1/dev"
+    $b mount -t tmpfs -o mode=1777 tmpfs "$1/tmp"
+    $b mount -t tmpfs -o mode=700 tmpfs "$1/root"
+    $b mount -t tmpfs -o mode=755 tmpfs "$1/inbox"
+    if [ -n "$2" ]; then $b mount -o bind /mnt/share "$1$2"; fi
+    $b chroot "$1" /usr/libexec/dockyard/dockyard-guest serve --relay "$3"
+}
+
 # Starts a guest and the helper in it. The options:
-#   -kernel F -initrd F -cmdline TEXT  The guest (paths below the root folder).
-#   -helper F       The helper program of the architecture of the guest.
+#   -image NAME     A signed release of the store (ztcl::vm image install).
+#                   Its second disk is the tools disk of os/tools, with the
+#                   helper. The pane runs in a chroot of that disk.
+#   -kernel F -initrd F -cmdline TEXT  The guest without -image (paths
+#                   below the root folder).
+#   -helper F       The helper program of the architecture of the guest,
+#                   without -image.
 #   -memory MB -cpus N
 #   -share {HOST GUEST ?rw?}   A folder for the guest, mounted at GUEST.
+#                   With -image, GUEST is a folder of the tools disk.
 proc ::dockyard::sandbox::boot {args} {
-    set o [dict merge {-cmdline {rdinit=/sbin/agent quiet} -memory 256 -cpus 1 -share {} -initrd {}} $args]
-    set create [list -kernel [dict get $o -kernel] -cmdline [dict get $o -cmdline] \
-        -memory [dict get $o -memory] -cpus [dict get $o -cpus]]
-    if {[dict get $o -initrd] ne ""} {lappend create -initrd [dict get $o -initrd]}
+    variable roots
+    variable tools_root
+    variable tools_mount
+    set o [dict merge {-image {} -cmdline {rdinit=/sbin/agent quiet} -memory 256 -cpus 1 -share {} -initrd {}} $args]
+    set image [dict get $o -image]
+    set create [list -memory [dict get $o -memory] -cpus [dict get $o -cpus]]
+    if {$image ne ""} {
+        lappend create -image $image
+    } else {
+        lappend create -kernel [dict get $o -kernel] -cmdline [dict get $o -cmdline]
+        if {[dict get $o -initrd] ne ""} {lappend create -initrd [dict get $o -initrd]}
+    }
     set share [dict get $o -share]
     if {$share ne ""} {lappend create -share $share}
     set vm [ztcl::vm create {*}$create]
     if {[catch {
         ztcl::vm start $vm
-        # The agent of ztcl mounts share0 at /mnt/share when the guest
-        # starts, with the mode of -share. A second mount of the same tag
-        # fails with EBUSY, so a bind mount puts it at GUEST.
-        if {$share ne ""} {
-            Check [ztcl::vm exec $vm -- /bin/busybox sh -c \
-                {/bin/busybox mkdir -p "$1" && /bin/busybox mount -o bind /mnt/share "$1"} sh [lindex $share 1]] "the mount of the share"
+        set port [Listen $vm]
+        if {$image ne ""} {
+            Check [ztcl::vm exec $vm -- /bin/busybox sh -c $tools_mount sh $tools_root [lindex $share 1] $port] "the mount of the tools disk"
+            set roots($vm) [list $tools_root /usr/libexec/dockyard/dockyard-guest]
+        } else {
+            Copy $vm [dict get $o -helper] [lindex $share 1]
+            Check [ztcl::vm exec $vm -- /tmp/dockyard-guest serve --relay $port] "the start of the helper"
+            set roots($vm) [list {} /tmp/dockyard-guest]
         }
-        set f [open [dict get $o -helper] rb]
-        fconfigure $f -translation binary
-        set data [read $f]
-        close $f
-        # The input of exec goes as UTF-8 text, so the bytes go as base64.
-        Check [ztcl::vm exec $vm -stdin [binary encode base64 $data] -- /bin/busybox sh -c \
-            {/bin/busybox base64 -d > /tmp/dockyard-guest && /bin/busybox chmod 755 /tmp/dockyard-guest}] "the copy of the helper"
-        Check [ztcl::vm exec $vm -- /tmp/dockyard-guest serve] "the start of the helper"
     } msg opts]} {
         catch {ztcl::vm delete $vm}
         return -options $opts $msg
     }
     return $vm
+}
+
+# A guest without -image: the bind mount of the share at GUEST, and the
+# copy of the helper into the tmpfs of the guest. The agent of ztcl
+# mounts share0 at /mnt/share when the guest starts, with the mode of
+# -share. A second mount of the same tag fails with EBUSY, so a bind
+# mount puts it at GUEST.
+proc ::dockyard::sandbox::Copy {vm helper guest} {
+    if {$guest ne ""} {
+        Check [ztcl::vm exec $vm -- /bin/busybox sh -c \
+            {/bin/busybox mkdir -p "$1" && /bin/busybox mount -o bind /mnt/share "$1"} sh $guest] "the mount of the share"
+    }
+    set f [open $helper rb]
+    fconfigure $f -translation binary
+    set data [read $f]
+    close $f
+    Check [ztcl::vm exec $vm -binary 1 -stdin $data -- /bin/busybox sh -c \
+        {/bin/busybox cat > /tmp/dockyard-guest && /bin/busybox chmod 755 /tmp/dockyard-guest}] "the copy of the helper"
+}
+
+# The path in the guest of PATH of the pane: the same path, or a path
+# below the folder of the tools disk.
+proc ::dockyard::sandbox::path {vm path} {
+    variable roots
+    if {![info exists roots($vm)]} {return $path}
+    return [lindex $roots($vm) 0]$path
 }
 
 proc ::dockyard::sandbox::Check {r what} {
@@ -99,7 +165,11 @@ namespace eval ::dockyard::sandbox {
 # the settings of the project stay as they are.
 proc ::dockyard::sandbox::hooks {vm home} {
     variable hook_events
-    set cmd {[{"hooks":[{"type":"command","command":"/tmp/dockyard-guest hook"}]}]}
+    variable roots
+    set helper /tmp/dockyard-guest
+    if {[info exists roots($vm)]} {set helper [lindex $roots($vm) 1]}
+    set cmd "\[{\"hooks\":\[{\"type\":\"command\",\"command\":\"$helper hook\"}\]}\]"
+    set home [path $vm $home]
     set parts {}
     foreach e $hook_events {lappend parts "\"$e\":$cmd"}
     set json "{\"hooks\":{[join $parts ,]}}"
@@ -216,30 +286,31 @@ proc ::dockyard::sandbox::end {s} {
 # client on the control connection. Each id gets a data connection,
 # which goes to the egress proxy of dockyard.
 proc ::dockyard::sandbox::relay {vm} {
-    variable port_control
-    set ch [ztcl::vm vsock $vm $port_control]
-    fconfigure $ch -translation binary -blocking 0
-    fileevent $ch readable [list ::dockyard::sandbox::Ids $vm $ch]
-    return $ch
+    variable relays
+    set relays($vm) 1
 }
 
-proc ::dockyard::sandbox::Ids {vm ch} {
-    variable port_data
-    variable ids
-    append ids($ch) [read $ch]
-    while {[string length $ids($ch)] >= 4} {
-        set id [string range $ids($ch) 0 3]
-        set ids($ch) [string range $ids($ch) 4 end]
-        set d [ztcl::vm vsock $vm $port_data]
-        fconfigure $d -translation binary
-        puts -nonewline $d $id
-        flush $d
-        ::dockyard::proxy attach $d
-    }
-    if {[eof $ch]} {
+# A connection of the guest to its relay port. It goes to the proxy
+# after sandbox::relay, and closes before.
+proc ::dockyard::sandbox::Relay {vm ch} {
+    variable relays
+    if {![info exists relays($vm)]} {
         close $ch
-        unset ids($ch)
+        return
     }
+    ::dockyard::proxy attach $ch
+}
+
+# Listens on the first free relay port of the host for the guest. On KVM
+# the vsock ports of the host are one space for the whole host, so a
+# second dockyard gets the next port.
+proc ::dockyard::sandbox::Listen {vm} {
+    variable port_relay
+    for {set p $port_relay} {$p < $port_relay + 64} {incr p} {
+        if {![catch {ztcl::vm listen $vm $p -command [list ::dockyard::sandbox::Relay $vm]} msg opts]} {return $p}
+        if {[lindex [dict get $opts -errorcode] 2] ne "LISTEN"} {return -options $opts $msg}
+    }
+    error "no free relay port from $port_relay"
 }
 
 # The events of the programs in the guest: a JSON line for each start

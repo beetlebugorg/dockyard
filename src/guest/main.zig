@@ -1,11 +1,13 @@
 //! dockyard-guest: the helper of dockyard in the guest of the sandbox
 //! (issue 13). The host copies it into the guest with the agent of
 //! ztcl::vm and starts it with `dockyard-guest serve`. The helper then
-//! listens on four vsock ports. `docs/dev/guest.md` has the protocol.
+//! listens on two vsock ports, and connects to one port of the host.
+//! `docs/dev/guest.md` has the protocol.
 //!
 //!   7100  A terminal session: a program on a PTY of the guest.
-//!   7101  The relay control: one id for each TCP client of the proxy port.
-//!   7102  The relay data: the host sends an id, then the bytes go both ways.
+//!   7101  The relay, on the host (CID 2): the helper connects once for
+//!         each TCP client of the proxy port, and the bytes go both ways.
+//!         `serve --relay PORT` gives another port.
 //!   7103  The events: one JSON line for each program that starts or ends.
 //!
 //! The proxy port is 127.0.0.1:3128 of the guest. A guest kernel with no
@@ -18,14 +20,13 @@
 //!   zig build-exe -target x86_64-linux-musl -O ReleaseSmall main.zig
 //!
 //! The tests run it on the host with `--unix DIR` (Unix sockets
-//! DIR/7100 to DIR/7103 in place of vsock), `--tcp PORT`, and
+//! DIR/7100, DIR/7101, and DIR/7103 in place of vsock), `--tcp PORT`, and
 //! `--foreground`.
 const std = @import("std");
 const linux = std.os.linux;
 
 pub const port_session: u32 = 7100;
-pub const port_control: u32 = 7101;
-pub const port_data: u32 = 7102;
+pub const port_relay: u32 = 7101;
 pub const port_events: u32 = 7103;
 pub const max_frame = (1 << 20) + 1;
 
@@ -41,6 +42,7 @@ pub const t_error = 0x3f; // guest: errno u32, message string
 
 const AF_VSOCK = 40;
 const VMADDR_CID_ANY: u32 = 0xffff_ffff;
+const VMADDR_CID_HOST: u32 = 2;
 const TIOCSCTTY = 0x540E;
 const TIOCSWINSZ = 0x5414;
 const TIOCGPTN = 0x80045430;
@@ -108,6 +110,9 @@ fn sleepMs(ms: u32) void {
 // The options of the command line.
 var unix_dir: ?[]const u8 = null;
 var tcp_port: u16 = 3128;
+/// The relay port of the host. On KVM the vsock ports of the host are
+/// one space for each host, so each guest of a host gets its own port.
+var relay_port: u32 = port_relay;
 var foreground = false;
 var self_pid: i32 = 0;
 
@@ -125,6 +130,28 @@ fn listenOn(port: u32) ?i32 {
     var addr: SockaddrVm = .{ .port = port, .cid = VMADDR_CID_ANY };
     _ = ok(linux.bind(fd, @ptrCast(&addr), @sizeOf(SockaddrVm))) orelse return null;
     _ = ok(linux.listen(fd, 16)) orelse return null;
+    return fd;
+}
+
+/// A connection to `port` of the host: vsock CID 2, or DIR/PORT with
+/// `--unix DIR`.
+fn connectHost(port: u32) ?i32 {
+    if (unix_dir) |dir| {
+        const fd: i32 = @intCast(ok(linux.socket(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0)) orelse return null);
+        var addr: SockaddrUn = .{};
+        _ = std.fmt.bufPrint(addr.path[0 .. addr.path.len - 1], "{s}/{d}", .{ dir, port }) catch return null;
+        if (ok(linux.connect(fd, @ptrCast(&addr), @sizeOf(SockaddrUn))) == null) {
+            _ = linux.close(fd);
+            return null;
+        }
+        return fd;
+    }
+    const fd: i32 = @intCast(ok(linux.socket(AF_VSOCK, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0)) orelse return null);
+    var addr: SockaddrVm = .{ .port = port, .cid = VMADDR_CID_HOST };
+    if (ok(linux.connect(fd, @ptrCast(&addr), @sizeOf(SockaddrVm))) == null) {
+        _ = linux.close(fd);
+        return null;
+    }
     return fd;
 }
 
@@ -185,6 +212,9 @@ pub fn main(init: std.process.Init.Minimal) void {
         } else if (k + 1 < argv.len and std.mem.eql(u8, a, "--hooks")) {
             k += 1;
             hook_dir = std.mem.sliceTo(argv[k], 0);
+        } else if (k + 1 < argv.len and std.mem.eql(u8, a, "--relay")) {
+            k += 1;
+            relay_port = std.fmt.parseInt(u32, std.mem.sliceTo(argv[k], 0), 10) catch port_relay;
         } else if (k + 1 < argv.len and std.mem.eql(u8, a, "--tcp")) {
             k += 1;
             tcp_port = std.fmt.parseInt(u16, std.mem.sliceTo(argv[k], 0), 10) catch 3128;
@@ -194,8 +224,8 @@ pub fn main(init: std.process.Init.Minimal) void {
         }
     }
     if (linux.getuid() == 0) ptyFolder();
-    const ports = [_]u32{ port_session, port_control, port_data, port_events };
-    var fds: [5]linux.pollfd = undefined;
+    const ports = [_]u32{ port_session, port_events };
+    var fds: [3]linux.pollfd = undefined;
     for (ports, 0..) |p, i| {
         const fd = listenOn(p) orelse {
             say("dockyard-guest: no socket for a port\n");
@@ -203,10 +233,10 @@ pub fn main(init: std.process.Init.Minimal) void {
         };
         fds[i] = .{ .fd = fd, .events = linux.POLL.IN, .revents = 0 };
     }
-    var n_fds: usize = 4;
+    var n_fds: usize = 2;
     if (listenTcp(tcp_port)) |fd| {
-        fds[4] = .{ .fd = fd, .events = linux.POLL.IN, .revents = 0 };
-        n_fds = 5;
+        fds[2] = .{ .fd = fd, .events = linux.POLL.IN, .revents = 0 };
+        n_fds = 3;
     } else say("dockyard-guest: no IPv4 in this guest, so no proxy port\n");
     if (!foreground) daemon();
     self_pid = linux.getpid();
@@ -232,29 +262,16 @@ fn daemon() void {
     if (nul > 2) _ = linux.close(nul);
 }
 
-// The TCP clients of the proxy port that wait for a data connection.
-const Pending = struct { id: u32, fd: i32, since: u64 };
-var pending: [64]?Pending = @splat(null);
-var next_id: u32 = 1;
-var control: i32 = -1;
-
 fn serve(fds: []linux.pollfd) void {
     while (true) {
-        _ = ok(linux.poll(fds.ptr, fds.len, 1000)) orelse continue;
-        dropOld();
+        _ = ok(linux.poll(fds.ptr, fds.len, -1)) orelse continue;
         for (fds, 0..) |f, i| {
             if (f.revents == 0) continue;
             const c: i32 = @intCast(ok(linux.accept4(f.fd, null, null, linux.SOCK.CLOEXEC)) orelse continue);
             switch (i) {
                 0 => inChild(c, fds, session),
-                1 => {
-                    if (control >= 0) _ = linux.close(control);
-                    control = c;
-                    for (pending) |p| if (p) |q| announce(q.id);
-                },
-                2 => takeData(c, fds),
-                3 => inChild(c, fds, events),
-                else => newClient(c),
+                1 => inChild(c, fds, events),
+                else => inChild(c, fds, relay),
             }
         }
     }
@@ -264,10 +281,6 @@ fn inChild(c: i32, fds: []linux.pollfd, comptime run: fn (i32) void) void {
     const pid = linux.fork();
     if (pid == 0) {
         for (fds) |f| _ = linux.close(f.fd);
-        if (control >= 0) _ = linux.close(control);
-        for (pending) |p| if (p) |q| {
-            _ = linux.close(q.fd);
-        };
         var dfl: linux.Sigaction = .{ .handler = .{ .handler = linux.SIG.DFL }, .mask = linux.sigemptyset(), .flags = 0 };
         _ = linux.sigaction(.CHLD, &dfl, null);
         run(c);
@@ -276,62 +289,12 @@ fn inChild(c: i32, fds: []linux.pollfd, comptime run: fn (i32) void) void {
     _ = linux.close(c);
 }
 
-fn announce(id: u32) void {
-    if (control < 0) return;
-    var b: [4]u8 = undefined;
-    std.mem.writeInt(u32, &b, id, .little);
-    if (!writeAll(control, &b)) {
-        _ = linux.close(control);
-        control = -1;
-    }
-}
-
-fn newClient(c: i32) void {
-    for (&pending) |*p| if (p.* == null) {
-        p.* = .{ .id = next_id, .fd = c, .since = nowMs() };
-        next_id +%= 1;
-        return announce(p.*.?.id);
-    };
-    _ = linux.close(c);
-}
-
-/// Closes a client with no data connection after 10 seconds.
-fn dropOld() void {
-    const now = nowMs();
-    for (&pending) |*p| if (p.*) |q| if (now - q.since > 10_000) {
-        _ = linux.close(q.fd);
-        p.* = null;
-    };
-}
-
-fn takeData(c: i32, fds: []linux.pollfd) void {
-    var pf = [1]linux.pollfd{.{ .fd = c, .events = linux.POLL.IN, .revents = 0 }};
-    var b: [4]u8 = undefined;
-    var have: usize = 0;
-    while (have < 4) {
-        if ((ok(linux.poll(&pf, 1, 1000)) orelse 0) == 0) break;
-        const n = ok(linux.read(c, b[have..].ptr, 4 - have)) orelse break;
-        if (n == 0) break;
-        have += n;
-    }
-    if (have < 4) {
-        _ = linux.close(c);
-        return;
-    }
-    const id = std.mem.readInt(u32, &b, .little);
-    for (&pending) |*p| if (p.*) |q| if (q.id == id) {
-        p.* = null;
-        const pid = linux.fork();
-        if (pid == 0) {
-            for (fds) |f| _ = linux.close(f.fd);
-            splice(c, q.fd);
-            linux.exit_group(0);
-        }
-        _ = linux.close(q.fd);
-        _ = linux.close(c);
-        return;
-    };
-    _ = linux.close(c);
+/// A TCP client of the proxy port: a connection to the relay port of the
+/// host, then the bytes go both ways. With no listener on the host, the
+/// client closes.
+fn relay(c: i32) void {
+    const h = connectHost(relay_port) orelse return;
+    splice(c, h);
 }
 
 /// Copies the bytes both ways until both ends are closed.
@@ -716,7 +679,7 @@ fn jsonString(out: []u8, at: usize, s: []const u8) ?usize {
 /// `serve --hooks DIR` and `hook DIR` change it, for the tests on the host.
 var hook_dir: [:0]const u8 = "/tmp/dockyard-hooks";
 var hook_in: [256 * 1024]u8 = undefined;
-var hook_heap: [2 * 1024 * 1024]u8 = undefined;
+var hook_heap: [256 * 1024]u8 = undefined;
 var hook_line: [16 * 1024]u8 = undefined;
 
 /// `dockyard-guest hook`: the command of each hook of the agent program.
@@ -732,26 +695,12 @@ fn hook() noreturn {
         if (r == 0) break;
         n += r;
     }
-    var fba = std.heap.FixedBufferAllocator.init(&hook_heap);
-    const v = std.json.parseFromSliceLeaky(std.json.Value, fba.allocator(), hook_in[0..n], .{}) catch linux.exit_group(0);
-    if (v != .object) linux.exit_group(0);
-    const tool_input = if (v.object.get("tool_input")) |t| (if (t == .object) t.object else null) else null;
+    var vals: [hook_fields.len]?[]const u8 = @splat(null);
+    var p: Json = .{ .s = hook_in[0..n] };
+    if (!p.object(&vals, false)) linux.exit_group(0);
     var w = (std.fmt.bufPrint(&hook_line, "{{\"type\":\"hook\",\"time\":{d}", .{nowMs()}) catch linux.exit_group(0)).len;
-    const fields = [_]struct { key: []const u8, from: []const u8, in_tool: bool }{
-        .{ .key = "event", .from = "hook_event_name", .in_tool = false },
-        .{ .key = "tool", .from = "tool_name", .in_tool = false },
-        .{ .key = "session", .from = "session_id", .in_tool = false },
-        .{ .key = "prompt", .from = "prompt", .in_tool = false },
-        .{ .key = "path", .from = "file_path", .in_tool = true },
-        .{ .key = "command", .from = "command", .in_tool = true },
-        .{ .key = "pattern", .from = "pattern", .in_tool = true },
-        .{ .key = "url", .from = "url", .in_tool = true },
-    };
-    for (fields) |f| {
-        const obj = if (f.in_tool) tool_input orelse continue else v.object;
-        const val = obj.get(f.from) orelse continue;
-        if (val != .string) continue;
-        w = putField(w, f.key, trimUtf8(val.string, 500)) orelse linux.exit_group(0);
+    for (hook_fields, vals) |f, val| {
+        w = putField(w, f.key, trimUtf8(val orelse continue, 500)) orelse linux.exit_group(0);
     }
     if (w + 2 > hook_line.len) linux.exit_group(0);
     @memcpy(hook_line[w..][0..2], "}\n");
@@ -768,6 +717,151 @@ fn hook() noreturn {
     if (good) _ = linux.rename(tz, nz) else _ = linux.unlink(tz);
     linux.exit_group(0);
 }
+
+/// The fields of a hook that go on the events stream: the key on the
+/// stream, the key in the JSON of the hook, and true for a key of
+/// `tool_input`.
+const hook_fields = [_]struct { key: []const u8, from: []const u8, in_tool: bool }{
+    .{ .key = "event", .from = "hook_event_name", .in_tool = false },
+    .{ .key = "tool", .from = "tool_name", .in_tool = false },
+    .{ .key = "session", .from = "session_id", .in_tool = false },
+    .{ .key = "prompt", .from = "prompt", .in_tool = false },
+    .{ .key = "path", .from = "file_path", .in_tool = true },
+    .{ .key = "command", .from = "command", .in_tool = true },
+    .{ .key = "pattern", .from = "pattern", .in_tool = true },
+    .{ .key = "url", .from = "url", .in_tool = true },
+};
+
+/// A small reader of the JSON of a hook. It finds the string values of
+/// `hook_fields` in the top object and in its object `tool_input`, and
+/// skips each other value. The decoded strings go in `hook_heap`.
+/// docs/dev/guest.md has the size against std.json.
+const Json = struct {
+    s: []const u8,
+    i: usize = 0,
+    heap: usize = 0,
+
+    fn ws(p: *Json) void {
+        while (p.i < p.s.len and (p.s[p.i] == ' ' or p.s[p.i] == '\t' or p.s[p.i] == '\n' or p.s[p.i] == '\r')) p.i += 1;
+    }
+
+    fn eat(p: *Json, ch: u8) bool {
+        p.ws();
+        if (p.i < p.s.len and p.s[p.i] == ch) {
+            p.i += 1;
+            return true;
+        }
+        return false;
+    }
+
+    /// Reads an object. `in_tool` is true for `tool_input`.
+    fn object(p: *Json, vals: []?[]const u8, in_tool: bool) bool {
+        if (!p.eat('{')) return false;
+        if (p.eat('}')) return true;
+        while (true) {
+            p.ws();
+            const key = p.string() orelse return false;
+            if (!p.eat(':')) return false;
+            p.ws();
+            const is_string = p.i < p.s.len and p.s[p.i] == '"';
+            const want = for (hook_fields, 0..) |f, k| {
+                if (f.in_tool == in_tool and std.mem.eql(u8, f.from, key)) break k;
+            } else null;
+            if (want != null and is_string) {
+                vals[want.?] = p.string() orelse return false;
+            } else if (!in_tool and std.mem.eql(u8, key, "tool_input") and p.i < p.s.len and p.s[p.i] == '{') {
+                if (!p.object(vals, true)) return false;
+            } else if (!p.skip()) return false;
+            if (p.eat('}')) return true;
+            if (!p.eat(',')) return false;
+        }
+    }
+
+    /// Skips one value.
+    fn skip(p: *Json) bool {
+        p.ws();
+        if (p.i >= p.s.len) return false;
+        switch (p.s[p.i]) {
+            '"' => return p.string() != null,
+            '{', '[' => {
+                var depth: usize = 0;
+                while (p.i < p.s.len) {
+                    switch (p.s[p.i]) {
+                        '"' => {
+                            _ = p.string() orelse return false;
+                            continue;
+                        },
+                        '{', '[' => depth += 1,
+                        '}', ']' => {
+                            depth -= 1;
+                            if (depth == 0) {
+                                p.i += 1;
+                                return true;
+                            }
+                        },
+                        else => {},
+                    }
+                    p.i += 1;
+                }
+                return false;
+            },
+            else => {
+                while (p.i < p.s.len and std.mem.indexOfScalar(u8, ",}] \t\r\n", p.s[p.i]) == null) p.i += 1;
+                return true;
+            },
+        }
+    }
+
+    /// Decodes the string at `i` into `hook_heap`.
+    fn string(p: *Json) ?[]const u8 {
+        if (p.i >= p.s.len or p.s[p.i] != '"') return null;
+        p.i += 1;
+        const start = p.heap;
+        while (p.i < p.s.len) {
+            const ch = p.s[p.i];
+            p.i += 1;
+            if (ch == '"') return hook_heap[start..p.heap];
+            if (p.heap + 4 > hook_heap.len) return null;
+            if (ch != '\\') {
+                hook_heap[p.heap] = ch;
+                p.heap += 1;
+                continue;
+            }
+            if (p.i >= p.s.len) return null;
+            const e = p.s[p.i];
+            p.i += 1;
+            const out: u8 = switch (e) {
+                'n' => '\n',
+                't' => '\t',
+                'r' => '\r',
+                'b' => 8,
+                'f' => 12,
+                'u' => {
+                    var cp: u21 = p.hex4() orelse return null;
+                    if (cp >= 0xd800 and cp < 0xdc00 and p.i + 1 < p.s.len and p.s[p.i] == '\\' and p.s[p.i + 1] == 'u') {
+                        p.i += 2;
+                        const lo = p.hex4() orelse return null;
+                        cp = if (lo >= 0xdc00 and lo < 0xe000) 0x10000 + ((cp - 0xd800) << 10) + (lo - 0xdc00) else 0xfffd;
+                    }
+                    if (cp >= 0xd800 and cp < 0xe000) cp = 0xfffd;
+                    p.heap += std.unicode.utf8Encode(cp, hook_heap[p.heap..][0..4]) catch return null;
+                    continue;
+                },
+                else => e,
+            };
+            hook_heap[p.heap] = out;
+            p.heap += 1;
+        }
+        return null;
+    }
+
+    fn hex4(p: *Json) ?u21 {
+        if (p.i + 4 > p.s.len) return null;
+        const v = std.fmt.parseInt(u16, p.s[p.i..][0..4], 16) catch return null;
+        p.i += 4;
+        return v;
+    }
+};
 
 fn putField(at: usize, key: []const u8, val: []const u8) ?usize {
     var w = at;
