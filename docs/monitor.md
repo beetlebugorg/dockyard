@@ -48,7 +48,7 @@ The log is the audit log of the project. It is outside the project folder, becau
 dockyard --audit-export ~/dockyard/my-app > audit.jsonl
 ```
 
-Your rules are in `dockyard-HASH.rules` next to the control socket of the project (`$XDG_RUNTIME_DIR`, or `/tmp` with your user ID in its name). The dockyard window reads the rules every 250 ms and gives the proxy its new allow list.
+Your rules are in `dockyard-HASH.rules` next to the control socket of the project (`$XDG_RUNTIME_DIR`, or the private folder `~/.local/state/dockyard/run` on Linux and `~/Library/Caches/dockyard/run` on macOS). The dockyard window reads the rules every 250 ms and gives the proxy its new allow list.
 
 ## Not in the monitor yet
 

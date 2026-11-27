@@ -36,7 +36,7 @@ The capabilities that a project declares, and the compute limit and the memory l
 
 ## The MCP bridge
 
-The MCP server (`dockyard --mcp`) talks to the preview child over a Unix socket. The socket is in `$XDG_RUNTIME_DIR`, or in `/tmp` with your user id in its name. The `eval` tool runs Tcl in the preview interpreter, with the capabilities of the preview only.
+The MCP server (`dockyard --mcp`) talks to the preview child over a Unix socket. The socket is in `$XDG_RUNTIME_DIR` when that folder belongs to you and has mode 0700. Else it is in a folder of mode 0700 that dockyard makes and checks: `~/.local/state/dockyard/run` (or `$XDG_STATE_HOME/dockyard/run`) on Linux, and `~/Library/Caches/dockyard/run` on macOS. A client connects only to a socket file that belongs to you and is not a link. The `eval` tool runs Tcl in the preview interpreter, with the capabilities of the preview only.
 
 `.mcp.json` has the full path of the dockyard program. The agent program asks you to approve this server before it uses it.
 

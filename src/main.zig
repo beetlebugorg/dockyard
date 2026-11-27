@@ -185,7 +185,6 @@ pub fn main(init: std.process.Init) !void {
     else
         init.environ_map.get("PWD") orelse "/";
     const folder = if (project) |p| try std.fs.path.resolve(arena, &.{ cwd, p }) else cwd;
-    const runtime = init.environ_map.get("XDG_RUNTIME_DIR");
     const audit_dir = audit.dirFor(arena, init.environ_map, folder) catch "";
     if (audit_export) {
         // The exit code is 1 when the chain is broken.
@@ -196,7 +195,7 @@ pub fn main(init: std.process.Init) !void {
     }
     if (serve_mcp) {
         crash.install(arena, io, init.environ_map, null);
-        const sock = try host.controlPath(arena, runtime, folder);
+        const sock = try host.controlPath(arena, host.Dirs.fromMap(init.environ_map), folder);
         try mcp.main(init.gpa, io, sock);
         return;
     }
@@ -238,7 +237,7 @@ pub fn main(init: std.process.Init) !void {
         try guest_release.setVars(&it, release);
         it.vm_host.image_keys = guest_release.keys;
         it.vm_host.image_store = guest_release.store(arena, init.environ_map);
-        try monitor.register(&it, try host.controlPath(arena, runtime, folder));
+        try monitor.register(&it, try host.controlPath(arena, host.Dirs.fromMap(init.environ_map), folder));
         // Windows has no audit log yet: the writer uses POSIX files.
         if (comptime @import("builtin").os.tag != .windows) if (audit_dir.len > 0) try audit.register(&it, audit_dir);
         try it.setVar("::dockyard::tui", .{ .str = if (tui) "1" else "0" });
@@ -284,7 +283,7 @@ pub fn main(init: std.process.Init) !void {
 
     var ctl: ?*control.Control = null;
     if (run_path) |f| {
-        const sock = try host.controlPath(arena, runtime, std.fs.path.dirname(f) orelse "/");
+        const sock = try host.controlPath(arena, host.Dirs.fromMap(init.environ_map), std.fs.path.dirname(f) orelse "/");
         const err_sink: ztcl.Output = .{ .ctx = err, .write = write };
         ctl = control.start(arena, app, sock, err_sink, exitNow) catch |e| blk: {
             // The stderr of the child is buffered: the line goes out now, so

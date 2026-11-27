@@ -25,6 +25,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const ztcl = @import("ztcl");
 const control = @import("control.zig");
+const sock = @import("../sandbox/sock.zig");
 
 const on_win = builtin.os.tag == .windows;
 const delimiter: u8 = if (on_win) ';' else ':';
@@ -64,13 +65,44 @@ pub const Setup = struct {
     dark: bool = false,
 };
 
-/// The path of the control socket of the preview of `project`, from
-/// the folder `runtime` (`XDG_RUNTIME_DIR`). With no folder, the path
-/// is in `/tmp` with the user ID in its name, and on Windows in the temp
-/// folder of the user.
-pub fn controlPath(a: std.mem.Allocator, runtime: ?[]const u8, project: []const u8) ![:0]const u8 {
+/// The path of the control socket of the preview of `project`, in the
+/// folder `runtime` (`XDG_RUNTIME_DIR`) when it is a private folder of
+/// the user. Else the path is in the private folder `dockyard/run`
+/// (mode 0700) below `XDG_STATE_HOME` or `~/.local/state` on Linux, and
+/// below `~/Library/Caches` on macOS. dockyard makes that folder and
+/// checks its owner and mode (`sock.privateDir`). On Windows the path is
+/// in the temp folder of the user.
+/// The folders of the environment that `controlPath` reads.
+pub const Dirs = struct {
+    runtime: ?[]const u8 = null,
+    state: ?[]const u8 = null,
+    home: ?[]const u8 = null,
+
+    /// The folders of an environment list (`NAME=value`).
+    pub fn fromList(env: []const [:0]const u8) Dirs {
+        var d: Dirs = .{};
+        for (env) |e| {
+            if (std.mem.startsWith(u8, e, "XDG_RUNTIME_DIR=")) d.runtime = e["XDG_RUNTIME_DIR=".len..];
+            if (std.mem.startsWith(u8, e, "XDG_STATE_HOME=")) d.state = e["XDG_STATE_HOME=".len..];
+            if (std.mem.startsWith(u8, e, "HOME=")) d.home = e["HOME=".len..];
+        }
+        return d;
+    }
+
+    /// The folders of an environment map.
+    pub fn fromMap(m: *const std.process.Environ.Map) Dirs {
+        return .{ .runtime = m.get("XDG_RUNTIME_DIR"), .state = m.get("XDG_STATE_HOME"), .home = m.get("HOME") };
+    }
+};
+
+pub fn controlPath(a: std.mem.Allocator, dirs: Dirs, project: []const u8) ![:0]const u8 {
+    const runtime = dirs.runtime;
     const hash = std.hash.Wyhash.hash(0, project);
-    if (runtime) |r| if (r.len > 0) return std.fmt.allocPrintSentinel(a, "{s}/dockyard-{x:0>16}.sock", .{ r, hash }, 0);
+    if (runtime) |r| if (!on_win and r.len > 0 and r[0] == '/') {
+        const rz = try a.dupeSentinel(u8, r, 0);
+        if (sock.statNoFollow(rz)) |st| if (st.uid == sock.uid() and st.mode & 0o077 == 0)
+            return std.fmt.allocPrintSentinel(a, "{s}/dockyard-{x:0>16}.sock", .{ r, hash }, 0);
+    };
     if (comptime on_win) {
         var buf: [260]u8 = undefined;
         const n = GetTempPathA(buf.len, &buf);
@@ -78,7 +110,22 @@ pub fn controlPath(a: std.mem.Allocator, runtime: ?[]const u8, project: []const 
         // The folder ends with `\`.
         return std.fmt.allocPrintSentinel(a, "{s}dockyard-{x:0>16}.sock", .{ buf[0..n], hash }, 0);
     }
-    return std.fmt.allocPrintSentinel(a, "/tmp/dockyard-{d}-{x:0>16}.sock", .{ std.c.getuid(), hash }, 0);
+    const dir = try runDir(a, dirs);
+    try sock.privateDir(dir);
+    return std.fmt.allocPrintSentinel(a, "{s}/dockyard-{x:0>16}.sock", .{ dir, hash }, 0);
+}
+
+/// The private folder of the sockets when there is no runtime folder.
+fn runDir(a: std.mem.Allocator, dirs: Dirs) ![:0]const u8 {
+    const home = dirs.home orelse "";
+    if (comptime builtin.os.tag.isDarwin()) {
+        if (home.len == 0) return error.NoHome;
+        return std.fmt.allocPrintSentinel(a, "{s}/Library/Caches/dockyard/run", .{home}, 0);
+    }
+    if (dirs.state) |state| if (state.len > 0 and state[0] == '/')
+        return std.fmt.allocPrintSentinel(a, "{s}/dockyard/run", .{state}, 0);
+    if (home.len == 0) return error.NoHome;
+    return std.fmt.allocPrintSentinel(a, "{s}/.local/state/dockyard/run", .{home}, 0);
 }
 
 /// The `PATH` with only its full paths, in memory of `a`.
@@ -128,12 +175,8 @@ pub fn allow(it: *ztcl.Interp, project: []const u8, env: []const [:0]const u8) !
     it.exec_host = .{ .allow = null, .timeout_ms = 0, .env = env };
     try it.register("::dockyard::findProgram", cmdFindProgram);
     // The preview child gets the same environment, so the same socket path.
-    var runtime: ?[]const u8 = null;
-    for (env) |e| if (std.mem.startsWith(u8, e, "XDG_RUNTIME_DIR=")) {
-        runtime = e["XDG_RUNTIME_DIR=".len..];
-    };
     var fba = std.heap.FixedBufferAllocator.init(&preview_path_buf);
-    preview_path = try controlPath(fba.allocator(), runtime, project);
+    preview_path = try controlPath(fba.allocator(), Dirs.fromList(env), project);
     try it.register("dockyard::preview::call", cmdPreviewCall);
 }
 
@@ -265,13 +308,16 @@ test "the control path depends on the project folder" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const one = try controlPath(a, "/run/user/7", "/home/u/app");
-    try std.testing.expect(std.mem.startsWith(u8, one, "/run/user/7/dockyard-"));
-    try std.testing.expect(!std.mem.eql(u8, one, try controlPath(a, "/run/user/7", "/home/u/other")));
-    const plain = try controlPath(a, null, "/x");
+    // A runtime folder that is not a private folder of the user is not used.
+    const base = if (std.c.getenv("TMPDIR")) |t| std.mem.sliceTo(t, 0) else "/tmp";
+    const home = try std.fmt.allocPrint(a, "{s}/dockyard-test-home-{d}", .{ base, std.c.getpid() });
+    const one = try controlPath(a, .{ .runtime = "/tmp", .home = home }, "/home/u/app");
+    try std.testing.expect(!std.mem.startsWith(u8, one, "/tmp/dockyard-"));
+    try std.testing.expect(!std.mem.eql(u8, one, try controlPath(a, .{ .runtime = "/tmp", .home = home }, "/home/u/other")));
+    const plain = try controlPath(a, .{ .home = home }, "/x");
     if (comptime on_win) {
         try std.testing.expect(isFull(plain) and std.mem.indexOf(u8, plain, "\\dockyard-") != null);
-    } else try std.testing.expect(std.mem.startsWith(u8, plain, "/tmp/dockyard-"));
+    } else try std.testing.expect(std.mem.indexOf(u8, plain, "/dockyard/run/dockyard-") != null);
 }
 
 test "the PATH of Windows keeps only full paths" {
