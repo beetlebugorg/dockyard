@@ -1,11 +1,13 @@
 name: Guest
 
-# Builds the tools disk of the sandbox guest (os/tools) on a runner of
-# each architecture, then writes the manifest of a guest release with the
-# kernel and the root disk of the latest ztcl test image, signed with the
-# test key of dockyard under the name dockyard-guest-test. The artifact
-# dockyard-guest-test has the release. A release signed with a key of
-# dockyard is a later step.
+# Builds the two disks of the sandbox guest (os/tools) on a runner of
+# each architecture: the Claude Code disk and the build disk (Zig). Then
+# it writes the manifests of two guest releases with the kernel and the
+# root disk of the latest ztcl test image, signed with the test key of
+# dockyard: dockyard-guest-test (the Claude Code disk) and
+# dockyard-guest-build-test (both disks). The artifacts of the same names
+# have the releases. A release signed with a key of dockyard is a later
+# step.
 on:
   push:
     branches: [main]
@@ -40,14 +42,16 @@ jobs:
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
           version: ${{ env.ZIG_VERSION }}
-      - name: Build the tools disk
+      - name: Build the Claude Code disk and the build disk
         run: ARCH=${{ matrix.arch }} OUT=out sh os/tools/build.sh
       # The disk is signed, so two builds must give the same bytes.
       - name: Build it again and compare
         run: |
           ARCH=${{ matrix.arch }} OUT=again sh os/tools/build.sh
-          cmp out/${{ matrix.arch }}-tools.img again/${{ matrix.arch }}-tools.img
-          cmp out/${{ matrix.arch }}-tools.json again/${{ matrix.arch }}-tools.json
+          for d in claude build; do
+            cmp out/${{ matrix.arch }}-$d.img again/${{ matrix.arch }}-$d.img
+            cmp out/${{ matrix.arch }}-$d.json again/${{ matrix.arch }}-$d.json
+          done
           rm -rf again
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -79,13 +83,20 @@ jobs:
           echo "ztcl test image of run $run"
       - name: Write and check the manifest
         run: |
-          OUT=out ZTCL_IMAGE=ztcl-image sh os/tools/manifest.sh
+          OUT=release IN=out ZTCL_IMAGE=ztcl-image sh os/tools/manifest.sh
+          OUT=release-build IN=out DISKS="claude build" ZTCL_IMAGE=ztcl-image sh os/tools/manifest.sh
           echo "ztcl-vm-image $(cut -d' ' -f1,2 os/tools/testkey/test_ed25519.pub)" > allowed
-          ssh-keygen -Y verify -f allowed -I ztcl-vm-image -n ztcl-vm-image -s out/manifest.json.sig < out/manifest.json
-          rm out/*-tools.json
-          ls -l out
+          for r in release release-build; do
+            ssh-keygen -Y verify -f allowed -I ztcl-vm-image -n ztcl-vm-image -s $r/manifest.json.sig < $r/manifest.json
+            ls -l $r
+          done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dockyard-guest-test
-          path: out/
+          path: release/
+          retention-days: 30
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dockyard-guest-build-test
+          path: release-build/
           retention-days: 30

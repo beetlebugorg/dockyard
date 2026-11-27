@@ -1,10 +1,11 @@
 #!/bin/sh
-# Makes the tools disk of the sandbox guest for one architecture (ARCH
+# Makes the two disks of the sandbox guest for one architecture (ARCH
 # arm64 or x86_64), on a Linux host of that architecture with Docker:
-#   out/ARCH-tools.img    a squashfs of the pane programs (node, npm, git,
-#                         Zig, and dockyard-guest), with its dm-verity hash
-#                         tree after the data
-#   out/ARCH-tools.json   the disk entry for manifest.sh
+#   out/ARCH-claude.img   the root of the pane: a shell, node, npm, git,
+#                         and dockyard-guest (squashfs with its dm-verity
+#                         hash tree after the data)
+#   out/ARCH-build.img    Zig, for the builds of apps in the pane
+#   out/ARCH-claude.json, out/ARCH-build.json  the disk entries for manifest.sh
 #   out/ARCH-packages.txt the Alpine packages and their versions
 # COMP is the compression of the squashfs: xz (default) or gzip.
 # Needs Zig 0.17.0 for the helper. The image of Alpine and the archive of
@@ -39,15 +40,16 @@ cp "$here/rootfs.sh" "$work/in/rootfs.sh"
 salt=$(printf 'dockyard-tools-%s' "$arch" | sha256sum | cut -c1-64)
 docker run --rm --platform "$platform" -v "$work/in:/in:ro" -v "$work/out:/out" "$alpine" \
     sh /in/rootfs.sh "$arch" "$zig_sha" "$salt" "${COMP:-xz}"
-hash=$(sed -n 's/^Root hash:[[:space:]]*//p' "$work/out/verity.txt")
-[ ${#hash} -eq 64 ] || { echo "no root hash" >&2; exit 1; }
-blocks=$(cat "$work/out/blocks.txt")
-img=$out/$arch-tools.img
-cp "$work/out/tools.img" "$img"
 cp "$work/out/packages.txt" "$out/$arch-packages.txt"
-sum=$(sha256sum "$img" | cut -c1-64)
-cat > "$out/$arch-tools.json" <<JSON
-{"name":"tools","file":"$arch-tools.img","sha256":"$sum","size":$(stat -c %s "$img"),"read_only":true,"verity":{"root_hash":"$hash","salt":"$salt","data_block":4096,"hash_block":4096,"hash_offset":$(( blocks * 4096 ))}}
+for disk in claude build; do
+    hash=$(sed -n 's/^Root hash:[[:space:]]*//p' "$work/out/$disk-verity.txt")
+    [ ${#hash} -eq 64 ] || { echo "$disk: no root hash" >&2; exit 1; }
+    blocks=$(cat "$work/out/$disk-blocks.txt")
+    img=$out/$arch-$disk.img
+    cp "$work/out/$disk.img" "$img"
+    sum=$(sha256sum "$img" | cut -c1-64)
+    cat > "$out/$arch-$disk.json" <<JSON
+{"name":"$disk","file":"$arch-$disk.img","sha256":"$sum","size":$(stat -c %s "$img"),"read_only":true,"verity":{"root_hash":"$hash","salt":"$salt","data_block":4096,"hash_block":4096,"hash_offset":$(( blocks * 4096 ))}}
 JSON
-echo "$arch: tools.img $sum, $(stat -c %s "$img") bytes"
-echo "$arch: verity root hash $hash"
+    echo "$arch: $disk.img $sum, $(stat -c %s "$img") bytes, verity root hash $hash"
+done
