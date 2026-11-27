@@ -31,10 +31,23 @@ The flags:
 
 ## The window
 
-The window has two panes:
+The window has a header, three views, and a status bar.
 
-- The terminal pane, on the left, runs the agent program in the project folder.
-- The preview pane, on the right, runs `main.tcl` of the project.
+- The header has the project button, the folder of the project, the view switch, and the Build button. The project button opens a menu of the other apps next to the project. The folder shows in full, and a long path wraps.
+- The Workspace view has two cards. The agent card, on the left, has the terminal pane. The preview card, on the right, has the preview pane and its console.
+- The Activity view is empty in this version. Pull request 49 fills it with the actions of the agent program.
+- The Apps view has a card for each app next to the project (see [The app list](#the-app-list)).
+- The status bar shows the sandbox (on, or off with a warning), the network policy, the last build, and the state of the agent program. In a sandbox run, it has the Shares button.
+
+| Key | Action |
+|---|---|
+| Ctrl+1, Ctrl+2, Ctrl+3 | Show Workspace, Activity, or Apps. |
+| Ctrl+Shift+B | Build. |
+| Ctrl+Shift+T | Open the target picker of Build. Escape closes it. |
+| Ctrl+Shift+R | Start the preview again. |
+| Ctrl+` | Open or close the console of the preview. |
+
+The terminal pane does not get these keys.
 
 ### The terminal pane
 
@@ -49,8 +62,8 @@ The program in the terminal pane runs with the full power of your user. Read [se
 The preview pane runs `main.tcl` in a child process (`dockyard --run main.tcl --headless`). The pane shows the image of the window of the child, and sends your clicks and keys to it.
 
 - The file watcher sees each change in the project folder. 150 ms after the last change, the pane starts the child again. Changes in `.git` do not start the child.
-- The output of the app (`puts`) and its errors show below the image.
-- The Restart button starts the child again.
+- The output of the app (`puts`) and its errors go to the console below the image. The Console button or Ctrl+` opens it.
+- The Restart button, or Ctrl+Shift+R, starts the child again.
 - The size of the pane is the size of the window of the child.
 
 A new run starts the state of the app again.
@@ -83,9 +96,9 @@ With these tools, the agent program gets images of the app and tests it.
 
 ## Build
 
-The bar has a check button for each target of `ztk bundle`: `x86_64-linux`, `aarch64-linux`, `x86_64-macos`, `aarch64-macos`, `x86_64-windows`, and `aarch64-windows`. The target of your computer is on at the start. A target is off and gray when the ztk program of the target is not next to dockyard.
+The arrow of the Build button opens the target picker, with the targets of `ztk bundle` in groups by system: `x86_64-linux`, `aarch64-linux`, `x86_64-macos`, `aarch64-macos`, `x86_64-windows`, and `aarch64-windows`. The target of your computer is on at the first start. A target is off and gray when the ztk program of the target is not next to dockyard. The choice stays in `.dockyard/settings` of the project.
 
-Click Build. For each selected target, dockyard copies the ztk program of the target and puts the app in it (`ztk bundle`). The output is one program file, `build/TARGET/NAME` in the project, with `.exe` for Windows. `NAME` is the name of the project folder. The bar shows the result. An error shows in the output pane below the preview.
+Click Build. For each selected target, dockyard copies the ztk program of the target and puts the app in it (`ztk bundle`). The output is one program file, `build/TARGET/NAME` in the project, with `.exe` for Windows. `NAME` is the name of the project folder. The status bar shows the result. An error shows in the console of the preview.
 
 `icon.png` of the project, a square PNG, is the icon of the program: the icon resource of a Windows program, and `NAME.desktop` with `NAME.png` next to a Linux program. A Windows program takes a PNG of 256 pixels or less, or `icon.ico` of the project when it has one. The app is `main.tcl` and the other files and folders of the project. The program leaves out the hidden files, `build/`, `CLAUDE.md`, and `LICENSE`. The program gets the capabilities of the preview: `file`, `channels`, and `clock`.
 
@@ -95,9 +108,9 @@ A program for another target has the full GUI backends of that target when its z
 
 ## The app list
 
-Click Apps. The app list shows each folder next to the project folder that has a `main.tcl` (for example, each app in `~/dockyard/`). Below each app, the list shows its programs in `build/`, with the target and the size.
+Click Apps, or press Ctrl+3. The Apps view has a card for each folder next to the project folder that has a `main.tcl` (for example, each app in `~/dockyard/`). Each card lists the programs of the app in `build/`, with the system, the target, and the size.
 
-- Launch starts the selected program.
-- Open in dockyard starts a new dockyard window for the selected app.
+- Launch starts a program.
+- Open starts a new dockyard window for the app.
 
 The list fills again after each build.
