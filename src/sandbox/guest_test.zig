@@ -185,9 +185,9 @@ test "the guest helper runs a program on a PTY, relays the proxy port, and gives
     // line of the events stream.
     // The other values (arrays, numbers, null, a "}" in a string) are
     // skipped, and the escapes of the strings are decoded.
-    try runHook(helper, hooks, "{\"session_id\":\"s1\", \"n\": -1.5e3, \"m\": null, \"hook_event_name\":\"PostToolUse\",\"tool_name\":\"Edit\",\"prompt\":\"\\u00e9\\ud83d\\ude00 \\\"q\\\"\\tx\",\"tool_input\":{\"edits\":[{\"a\":1,\"b\":[true,false,{\"c\":\"}\"}]}],\"file_path\":\"/work/main.tcl\",\"old_string\":\"a\\nb\"}}");
-    const hk = try readUntil(ev, &ebuf, "main.tcl\"}");
-    const want = "\"event\":\"PostToolUse\",\"tool\":\"Edit\",\"session\":\"s1\",\"prompt\":\"\u{e9}\u{1f600} \\\"q\\\"\\u0009x\",\"path\":\"/work/main.tcl\"}";
+    try runHook(helper, hooks, "{\"session_id\":\"s1\", \"n\": -1.5e3, \"m\": null, \"hook_event_name\":\"PostToolUse\",\"tool_name\":\"Edit\",\"prompt\":\"\\u00e9\\ud83d\\ude00 \\\"q\\\"\\tx\",\"tool_input\":{\"edits\":[{\"a\":1,\"b\":[true,false,{\"c\":\"}\"}]}],\"file_path\":\"/work/main.tcl\",\"old_string\":\"a\\nb\"},\"tool_use_id\":\"tu1\",\"tool_response\":{\"stdout\":\"done\",\"x\":[1]}}");
+    const hk = try readUntil(ev, &ebuf, "\"stdout\":\"done\"}");
+    const want = "\"event\":\"PostToolUse\",\"tool\":\"Edit\",\"session\":\"s1\",\"call\":\"tu1\",\"prompt\":\"\u{e9}\u{1f600} \\\"q\\\"\\u0009x\",\"path\":\"/work/main.tcl\",\"old\":\"a\\nb\",\"stdout\":\"done\"}";
     std.testing.expect(std.mem.indexOf(u8, hk, "{\"type\":\"hook\"") != null and std.mem.indexOf(u8, hk, want) != null) catch |e| {
         std.debug.print("hook line: {s}\n", .{hk});
         return e;

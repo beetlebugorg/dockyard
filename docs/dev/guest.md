@@ -8,14 +8,14 @@
 
 1. `ztcl::vm create` and `start`, with the project folder as the share `share0`. The agent of ztcl mounts `share0` at `/mnt/share`, and a bind mount puts it at `/work`. A second mount of the same 9p tag fails with EBUSY.
 2. `ztcl::vm exec -binary 1` of `/bin/busybox sh -c {cat > /tmp/dockyard-guest ...}` copies the helper into the tmpfs of the guest.
-3. `ztcl::vm exec` of `/tmp/dockyard-guest serve --relay PORT`. The helper mounts devpts at `/dev/pts` when the guest has none, opens its ports, goes to the background, and the `exec` ends.
+3. `ztcl::vm exec` of `/tmp/dockyard-guest serve --framed --relay PORT`. The helper mounts devpts at `/dev/pts` when the guest has none, opens its ports, goes to the background, and the `exec` ends.
 
 On an x86-64 Linux with KVM, steps 1 to 3 take about 45 ms.
 
 With `-image NAME`, the guest is a signed release of the store (`os/tools/manifest.sh`), and its second disk is the Claude Code disk (a third disk, the build disk with Zig, mounts at `/opt/zig`). The helper comes from that disk:
 
 1. `ztcl::vm create -image NAME` and `start`, with the share as above.
-2. One `ztcl::vm exec` of a shell script (`tools_mount` in `sandbox.tcl`). It mounts the squashfs of `/dev/dm-1` read-only at `/tmp/tools`, then `proc`, a recursive bind of `/dev`, a tmpfs at `tmp`, `root`, and `inbox`, and the share at its folder of the disk (`/work`). Then it runs `chroot /tmp/tools /usr/libexec/dockyard/dockyard-guest serve --relay PORT`.
+2. One `ztcl::vm exec` of a shell script (`tools_mount` in `sandbox.tcl`). It mounts the squashfs of `/dev/dm-1` read-only at `/tmp/tools`, then `proc`, a recursive bind of `/dev`, a tmpfs at `tmp`, `root`, and `inbox`, and the share at its folder of the disk (`/work`). Then it runs `chroot /tmp/tools /usr/libexec/dockyard/dockyard-guest serve --framed --relay PORT`.
 
 The pane and its programs run in the chroot, so they find node, git, and Zig at the usual paths. `dockyard::sandbox::path VM PATH` gives the path in the guest of a path of the pane, for an `exec` outside the chroot. The hook command of the settings is the helper of the disk.
 
@@ -52,7 +52,7 @@ The first frame is `open`. The program starts in a new session with the PTY as i
 
 The helper listens on `127.0.0.1:3128` of the guest. The kernel starts with the loopback device down, so the helper first sets the flag `IFF_UP` of `lo` (the ioctls `SIOCGIFFLAGS` and `SIOCSIFFLAGS` on a socket of `AF_INET`). The guest programs get `HTTPS_PROXY=http://127.0.0.1:3128`.
 
-1. `dockyard::sandbox::boot` listens on a relay port of the host with `ztcl::vm listen`, before the helper starts, and gives the port to the helper (`serve --relay PORT`). On KVM the vsock ports of the host are one space for the whole host, so the port is the first free one from 7101.
+1. `dockyard::sandbox::boot` listens on a relay port of the host with `ztcl::vm listen -framed 1`, before the helper starts, and gives the port to the helper (`serve --framed --relay PORT`). The helper speaks the framed relay of ztcl (the preamble `ZTRELAY1`, then data and end frames in each direction), so the end of a stream of a client reaches the proxy on each hypervisor, also on Virtualization.framework, which drops a vsock half close while its buffer holds data. On KVM the vsock ports of the host are one space for the whole host, so the port is the first free one from 7101.
 2. For each new TCP client of port 3128, a child of the helper connects to the relay port of the host and copies the bytes between the client and that connection.
 3. After `dockyard::sandbox::relay VM`, the host gives each connection to the egress proxy (`dockyard::proxy attach`), which reads the `CONNECT` request and checks the allow list. Before it, the host closes the connection.
 
