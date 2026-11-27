@@ -6,7 +6,7 @@
 
 `sandbox.tcl` (`dockyard::sandbox::boot`) starts the guest and then the helper:
 
-1. `ztcl::vm create` and `start`, with the project folder as the share `share0`, and `ztcl::vm mount` of it at `/work`.
+1. `ztcl::vm create` and `start`, with the project folder as the share `share0`. The agent of ztcl mounts `share0` at `/mnt/share`, and a bind mount puts it at `/work`. A second mount of the same 9p tag fails with EBUSY.
 2. `ztcl::vm exec` of `/bin/busybox sh -c {base64 -d > /tmp/dockyard-guest ...}` copies the helper into the tmpfs of the guest. The input of `exec` goes as UTF-8 text, so the bytes go as base64. The tools disk of `vm.md` will have the helper, and this step goes away.
 3. `ztcl::vm exec` of `/tmp/dockyard-guest serve`. The helper mounts devpts at `/dev/pts` when the guest has none, opens its ports, goes to the background, and the `exec` ends.
 
