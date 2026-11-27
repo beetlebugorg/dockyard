@@ -29,8 +29,17 @@ Each record is one JSON object on one line (JSON lines). The fields of each reco
 | `source` | string | The source: `hook`, `helper`, `proxy`, `nat`, `watch`, `app`. |
 | `data` | object | The fields of the kind. |
 | `prev` | string | The SHA-256 (hex) of the line of the previous record, without its newline. The first record has 64 zeros. |
+| `mac` | string | The last field. An HMAC-SHA-256 (hex) with the key of the log, of the mac of the previous record (32 zero bytes for the first record with a mac) and the text of the line up to `,"mac":`. |
 
-A reader checks the chain: the SHA-256 of line N is `prev` of line N+1. The last hash also goes into the index file, so a cut of the end of the log shows.
+A reader checks the chain: the SHA-256 of line N is `prev` of line N+1. A reader with the key also checks `mac`. The last hash also goes into the index file.
+
+The keyed chain:
+
+- The key is 32 random bytes in the file `key` of the folder of the log, with mode 0600. dockyard makes it at the first open of the log.
+- The head record is a file outside the folder of the log: `audit-heads/HASH` next to the folder `audit` (`~/.local/state/dockyard/audit-heads/HASH` on Linux). It has the `seq` and the `mac` of the last record and an HMAC of the two with the key. dockyard writes it after each record. `verify` and `--audit-export` compare it with the last record, so a cut of the end of the log, of its index, and of its header shows.
+- A record with no `mac` fits the chain only before the first record with a mac. `verify` gives `keyed_from`, the seq of the first record with a mac, so a log of an earlier version stays readable.
+- `repair` puts a line that it finds after the last index record into the index only when its mac is right.
+- The limits: the agent program in the sandbox guest cannot reach the folder of the log. A program that runs as the same user on the host can read the key, so it can write a new chain and a new head record. The keyed chain shows a change by such a program only when the program does not use the key. It does not prevent the change. The signed records of `ztcl::meter` (step 7) are the next step.
 
 ## The kinds
 
@@ -64,6 +73,7 @@ The folder of the log is outside the project: `$XDG_STATE_HOME/dockyard/audit/HA
 
 - `log-NNNNNN.jsonl`: the records, in files of up to 64 MiB, from `log-000001.jsonl`. The chain goes on from one file to the next.
 - `index`: the index (below).
+- `key`: the key of the keyed chain, with mode 0600.
 
 The ids: a session is the time of its start in ms, the process id of dockyard, and a count, in hex (`19ac1f3e2a1-3f0c-1`). A turn is the session id, a dot, and the number of the turn in the session (`19ac1f3e2a1-3f0c-1.4`).
 

@@ -52,6 +52,65 @@ const max_list_bytes = 64 * 1024;
 const header_size = 64;
 const magic = "DYAUDIT1";
 const zero_hash: [64]u8 = @splat('0');
+const zero_mac: [32]u8 = @splat(0);
+const Hmac = std.crypto.auth.hmac.sha2.HmacSha256;
+/// The end of a line with a mac: `,"mac":"` and 64 hex digits and `"}`.
+const mac_tail = 8 + 64 + 2;
+
+/// The mac of a record: an HMAC-SHA-256 with the key, of the mac of the
+/// record before it (32 zero bytes for the first) and the text of the
+/// line up to `,"mac":`.
+fn macNext(key: *const [32]u8, prev: [32]u8, body: []const u8) [32]u8 {
+    var h = Hmac.init(key);
+    h.update(&prev);
+    h.update(body);
+    var out: [32]u8 = undefined;
+    h.final(&out);
+    return out;
+}
+
+/// The mac field of a line, or null.
+fn macField(line: []const u8) ?[32]u8 {
+    if (line.len < mac_tail or !std.mem.eql(u8, line[line.len - mac_tail ..][0..8], ",\"mac\":\"")) return null;
+    var out: [32]u8 = undefined;
+    _ = std.fmt.hexToBytes(&out, line[line.len - mac_tail + 8 ..][0..64]) catch return null;
+    return out;
+}
+
+/// The mac after `line`, when its mac fits `prev`. A line with no mac
+/// fits only before the first line with a mac (`prev` zero).
+fn macCheck(key: *const [32]u8, prev: [32]u8, line: []const u8) ?[32]u8 {
+    const got = macField(line) orelse return if (std.mem.eql(u8, &prev, &zero_mac)) zero_mac else null;
+    const want = macNext(key, prev, line[0 .. line.len - mac_tail]);
+    if (!std.crypto.timing_safe.eql([32]u8, got, want)) return null;
+    return got;
+}
+
+/// The text of the head record: `seq mac hmac` and a newline.
+fn headText(buf: []u8, key: *const [32]u8, seq: u64, mac: [32]u8) ![]const u8 {
+    var h = Hmac.init(key);
+    var sb: [8]u8 = undefined;
+    std.mem.writeInt(u64, &sb, seq, .little);
+    h.update("dockyard-audit-head");
+    h.update(&sb);
+    h.update(&mac);
+    var tag: [32]u8 = undefined;
+    h.final(&tag);
+    return std.fmt.bufPrint(buf, "{d} {s} {s}\n", .{ seq, std.fmt.bytesToHex(mac, .lower), std.fmt.bytesToHex(tag, .lower) });
+}
+
+fn randomBytes(buf: []u8) void {
+    if (comptime builtin.os.tag == .linux) {
+        var n: usize = 0;
+        while (n < buf.len) {
+            const r = std.os.linux.getrandom(buf[n..].ptr, buf.len - n, 0);
+            if (std.os.linux.errno(r) != .SUCCESS) continue;
+            n += r;
+        }
+    } else if (comptime builtin.os.tag.isDarwin()) {
+        std.c.arc4random_buf(buf.ptr, buf.len);
+    } else @memset(buf, 0);
+}
 
 pub const kinds = [_][]const u8{ "session", "turn", "tool", "exec", "exit", "file", "net", "dns", "blocked", "build", "share", "rule", "note" };
 pub const sources = [_][]const u8{ "hook", "helper", "proxy", "nat", "watch", "app" };
@@ -143,6 +202,12 @@ pub const Log = struct {
     turn: ?[]u8 = null,
     clock: *const fn () i64 = wallMs,
     path_buf: [1024]u8 = undefined,
+    /// The secret key of the keyed chain (the file `key`, mode 0600).
+    key: [32]u8 = undefined,
+    /// The mac of the record `mac_seq`, so an append reads no line.
+    mac_seq: u64 = 0,
+    mac_hash: [64]u8 = zero_hash,
+    last_mac: [32]u8 = zero_mac,
 
     pub fn open(a: std.mem.Allocator, dir: [:0]const u8) !Log {
         if (comptime on_win) return error.Unsupported;
@@ -151,7 +216,73 @@ pub const Log = struct {
         const p = try l.path("index", 0);
         l.index_fd = c.open(p.ptr, .{ .ACCMODE = .RDWR, .CREAT = true, .CLOEXEC = true }, @as(c.mode_t, 0o600));
         if (l.index_fd < 0) return error.NoIndex;
+        try l.loadKey();
         return l;
+    }
+
+    /// Reads the key, or makes it: 32 random bytes in the file `key` of
+    /// the folder, with mode 0600. A link at the path is refused.
+    fn loadKey(l: *Log) !void {
+        const p = try l.path("key", 0);
+        var fd = c.open(p.ptr, .{ .ACCMODE = .RDONLY, .NOFOLLOW = true, .CLOEXEC = true }, @as(c.mode_t, 0));
+        if (fd < 0) {
+            fd = c.open(p.ptr, .{ .ACCMODE = .WRONLY, .CREAT = true, .EXCL = true, .NOFOLLOW = true, .CLOEXEC = true }, @as(c.mode_t, 0o600));
+            if (fd < 0) return error.NoKey;
+            defer _ = c.close(fd);
+            randomBytes(&l.key);
+            if (c.write(fd, &l.key, l.key.len) != l.key.len) return error.NoKey;
+            return;
+        }
+        defer _ = c.close(fd);
+        if (c.read(fd, &l.key, l.key.len) != l.key.len) return error.NoKey;
+    }
+
+    /// The path of the head record: `audit-heads/HASH` next to the
+    /// folder `audit`, outside the folder of the log.
+    fn headPath(l: *Log, buf: []u8) ![:0]const u8 {
+        const base = std.fs.path.basename(l.dir);
+        const audit_dir = std.fs.path.dirname(l.dir) orelse return error.BadPath;
+        const top = std.fs.path.dirname(audit_dir) orelse return error.BadPath;
+        return std.fmt.bufPrintSentinel(buf, "{s}/audit-heads/{s}", .{ top, base }, 0);
+    }
+
+    /// Writes the head record: the seq and the mac of the last record,
+    /// and an HMAC of the two with the key.
+    fn writeHead(l: *Log, seq: u64, mac: [32]u8) void {
+        var buf: [1100]u8 = undefined;
+        const p = l.headPath(&buf) catch return;
+        if (std.fs.path.dirname(p)) |d| {
+            var dbuf: [1100]u8 = undefined;
+            const dz = std.fmt.bufPrintSentinel(&dbuf, "{s}", .{d}, 0) catch return;
+            _ = c.mkdir(dz.ptr, 0o700);
+        }
+        var text: [200]u8 = undefined;
+        const t = headText(&text, &l.key, seq, mac) catch return;
+        const fd = c.open(p.ptr, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true, .NOFOLLOW = true, .CLOEXEC = true }, @as(c.mode_t, 0o600));
+        if (fd < 0) return;
+        defer _ = c.close(fd);
+        _ = c.write(fd, t.ptr, t.len);
+    }
+
+    /// The head record, or null when there is none.
+    fn readHead(l: *Log, buf: []u8) ?[]const u8 {
+        var pbuf: [1100]u8 = undefined;
+        const p = l.headPath(&pbuf) catch return null;
+        const fd = c.open(p.ptr, .{ .ACCMODE = .RDONLY, .NOFOLLOW = true, .CLOEXEC = true }, @as(c.mode_t, 0));
+        if (fd < 0) return null;
+        defer _ = c.close(fd);
+        const n = c.read(fd, buf.ptr, buf.len);
+        return if (n > 0) buf[0..@intCast(n)] else null;
+    }
+
+    /// The mac of the record `h.seq`: zero when the record has none.
+    fn macOfLast(l: *Log, h: *const Header) ![32]u8 {
+        if (h.seq == 0) return zero_mac;
+        if (l.mac_seq == h.seq and std.mem.eql(u8, &l.mac_hash, &h.hash)) return l.last_mac;
+        const e = l.readEntry(h.seq) orelse return error.NoIndex;
+        const line = try l.readLine(e);
+        defer l.a.free(line);
+        return macField(line) orelse zero_mac;
     }
 
     pub fn close(l: *Log) void {
@@ -263,7 +394,9 @@ pub const Log = struct {
                 var bad = false;
                 while (std.mem.indexOfScalarPos(u8, tail, at, '\n')) |end| : (at = end + 1) {
                     const line = tail[at..end];
-                    const e = parseEntry(l.a, line, h.seq + 1, &h.hash) orelse {
+                    const prev_mac = try l.macOfLast(h);
+                    const next_mac = macCheck(&l.key, prev_mac, line);
+                    const e = (if (next_mac == null) null else parseEntry(l.a, line, h.seq + 1, &h.hash)) orelse {
                         bad = true;
                         break;
                     };
@@ -327,7 +460,9 @@ pub const Log = struct {
         if (call) |t| try w.str(t, 256) else try w.raw("null");
         try w.print(",\"source\":\"{s}\",\"data\":", .{source});
         try w.raw(data);
-        try w.print(",\"prev\":\"{s}\"}}", .{h.hash});
+        try w.print(",\"prev\":\"{s}\"", .{h.hash});
+        const mac = macNext(&l.key, try l.macOfLast(h), w.buf.items);
+        try w.print(",\"mac\":\"{s}\"}}", .{std.fmt.bytesToHex(mac, .lower)});
         const line = w.buf.items;
         if (line.len > max_line) return error.LineTooLong;
         if (!l.useLog(h.file)) return error.NoLog;
@@ -356,6 +491,10 @@ pub const Log = struct {
         h.seq = seq;
         h.hash = hexHash(line);
         if (!l.writeHeader(h.*)) return error.NoIndex;
+        l.mac_seq = seq;
+        l.mac_hash = h.hash;
+        l.last_mac = mac;
+        l.writeHead(seq, mac);
         return seq;
     }
 
@@ -460,6 +599,8 @@ pub const Log = struct {
         /// The seq of the first bad record, with ok false.
         bad: u64 = 0,
         reason: []const u8 = "",
+        /// The seq of the first record with a mac, or 0.
+        keyed_from: u64 = 0,
     };
 
     /// Reads each log file in order and checks the seq numbers and the
@@ -467,6 +608,8 @@ pub const Log = struct {
     pub fn verify(l: *Log, out: ?*std.ArrayList(u8)) !Check {
         const h = l.readHeader();
         var prev: [64]u8 = zero_hash;
+        var mac: [32]u8 = zero_mac;
+        var keyed_from: u64 = 0;
         var seq: u64 = 0;
         var num: u32 = 1;
         while (true) : (num += 1) {
@@ -478,6 +621,9 @@ pub const Log = struct {
                 const text = m[at..end];
                 if (parseEntry(l.a, text, seq + 1, &prev) == null)
                     return .{ .ok = false, .records = seq, .last = prev, .bad = seq + 1, .reason = "the record does not fit the chain" };
+                mac = macCheck(&l.key, mac, text) orelse
+                    return .{ .ok = false, .records = seq, .last = prev, .bad = seq + 1, .reason = "the mac of the record is wrong" };
+                if (keyed_from == 0 and macField(text) != null) keyed_from = seq + 1;
                 seq += 1;
                 prev = hexHash(text);
                 if (out) |o| {
@@ -489,7 +635,18 @@ pub const Log = struct {
         }
         if (seq != h.seq or !std.mem.eql(u8, &prev, &h.hash))
             return .{ .ok = false, .records = seq, .last = prev, .bad = seq, .reason = "the last record is not the record of the index" };
-        return .{ .ok = true, .records = seq, .last = prev };
+        // The head record outside the folder of the log has the seq and
+        // the mac of the last record, so a cut of the end shows.
+        if (keyed_from > 0) {
+            var hb: [200]u8 = undefined;
+            var want: [200]u8 = undefined;
+            const got = l.readHead(&hb) orelse
+                return .{ .ok = false, .records = seq, .last = prev, .bad = seq, .reason = "no head record", .keyed_from = keyed_from };
+            const t = headText(&want, &l.key, seq, mac) catch unreachable;
+            if (!std.mem.eql(u8, got, t))
+                return .{ .ok = false, .records = seq, .last = prev, .bad = seq, .reason = "the head record is not the last record", .keyed_from = keyed_from };
+        }
+        return .{ .ok = true, .records = seq, .last = prev, .keyed_from = keyed_from };
     }
 };
 
@@ -913,6 +1070,7 @@ fn cmdAudit(it: *ztcl.Interp, argv: []const ztcl.Value, _: ?*ztcl.interp.Cmd) zt
             .{ .str = "last" },    .{ .str = try a.dupe(u8, &r.last) },
             .{ .str = "bad" },     .{ .int = @intCast(r.bad) },
             .{ .str = "reason" },  .{ .str = r.reason },
+            .{ .str = "keyed_from" }, .{ .int = @intCast(r.keyed_from) },
         });
     }
     return it.fail("bad option \"{s}\": must be log, json, session, context, query, count, last, verify, or path", .{sub});
@@ -930,7 +1088,7 @@ pub fn exportTo(a: std.mem.Allocator, dir: [:0]const u8, fd: c.fd_t) !bool {
     var w: Line = .{ .a = a };
     defer w.buf.deinit(a);
     if (r.ok) {
-        try w.print("{{\"kind\":\"note\",\"data\":{{\"text\":\"chain ok\",\"records\":{d},\"last\":\"{s}\"}}}}\n", .{ r.records, r.last });
+        try w.print("{{\"kind\":\"note\",\"data\":{{\"text\":\"chain ok\",\"records\":{d},\"last\":\"{s}\",\"keyed_from\":{d}}}}}\n", .{ r.records, r.last, r.keyed_from });
     } else {
         try w.print("{{\"kind\":\"note\",\"data\":{{\"text\":\"chain broken\",\"records\":{d},\"bad\":{d},\"reason\":\"{s}\"}}}}\n", .{ r.records, r.bad, r.reason });
     }
@@ -950,21 +1108,30 @@ fn testClock() i64 {
     return test_now;
 }
 
+/// A test folder of the log: TMPDIR/dockyard-test-audit-PID/audit/NAME,
+/// so the head record goes to .../audit-heads/NAME in the same test
+/// folder.
 fn testDir(buf: []u8, name: []const u8) ![:0]const u8 {
     const t = std.c.getenv("TMPDIR");
     const base = if (t) |p| std.mem.sliceTo(p, 0) else "/tmp";
-    const d = try std.fmt.bufPrintSentinel(buf, "{s}/dockyard-test-audit-{s}-{d}", .{ base, name, c.getpid() }, 0);
+    const d = try std.fmt.bufPrintSentinel(buf, "{s}/dockyard-test-audit-{d}/audit/{s}", .{ base, c.getpid(), name }, 0);
     rmDir(d);
     return d;
 }
 
-/// Removes the files of a test log and its folder.
+/// Removes the files of a test log, its head record, and its folders.
 fn rmDir(d: [:0]const u8) void {
     var p: [600]u8 = undefined;
-    _ = c.unlink((std.fmt.bufPrintSentinel(&p, "{s}/index", .{d}, 0) catch return).ptr);
+    for ([_][]const u8{ "index", "key" }) |f| _ = c.unlink((std.fmt.bufPrintSentinel(&p, "{s}/{s}", .{ d, f }, 0) catch return).ptr);
     var n: u32 = 1;
     while (n < 20) : (n += 1) _ = c.unlink((std.fmt.bufPrintSentinel(&p, "{s}/log-{d:0>6}.jsonl", .{ d, n }, 0) catch return).ptr);
     _ = c.rmdir(d.ptr);
+    const audit_dir = std.fs.path.dirname(d) orelse return;
+    const top = std.fs.path.dirname(audit_dir) orelse return;
+    _ = c.unlink((std.fmt.bufPrintSentinel(&p, "{s}/audit-heads/{s}", .{ top, std.fs.path.basename(d) }, 0) catch return).ptr);
+    _ = c.rmdir((std.fmt.bufPrintSentinel(&p, "{s}/audit-heads", .{top}, 0) catch return).ptr);
+    _ = c.rmdir((std.fmt.bufPrintSentinel(&p, "{s}", .{audit_dir}, 0) catch return).ptr);
+    _ = c.rmdir((std.fmt.bufPrintSentinel(&p, "{s}", .{top}, 0) catch return).ptr);
 }
 
 test "the audit log chains, indexes, and filters the records" {
@@ -1076,7 +1243,7 @@ test "the audit log finds a change of a record and repairs a crash" {
     defer rmDir(dir);
     const saved = max_file;
     defer max_file = saved;
-    max_file = 600;
+    max_file = 800;
     var l = try Log.open(a, dir);
     defer {
         a.free(l.dir);
@@ -1084,7 +1251,7 @@ test "the audit log finds a change of a record and repairs a crash" {
     }
     var i: u64 = 0;
     while (i < 6) : (i += 1) _ = try l.append("note", "app", "{\"text\":\"a note of about one hundred bytes, so the log has more than one file\"}", "s", null, null, @intCast(i));
-    // Two records fit in a file of 600 bytes.
+    // Two records fit in a file of 800 bytes.
     var p2: [600]u8 = undefined;
     const f2 = try std.fmt.bufPrintSentinel(&p2, "{s}/log-000002.jsonl", .{dir}, 0);
     try std.testing.expectEqual(@as(c_int, 0), c.access(f2.ptr, 0));
@@ -1108,7 +1275,9 @@ test "the audit log finds a change of a record and repairs a crash" {
     const fd = c.open(f3.ptr, .{ .ACCMODE = .WRONLY, .APPEND = true }, @as(c.mode_t, 0));
     var w: Line = .{ .a = a };
     defer w.buf.deinit(a);
-    try w.print("{{\"v\":1,\"seq\":7,\"time\":9,\"kind\":\"note\",\"session\":\"s\",\"turn\":null,\"call\":null,\"source\":\"app\",\"data\":{{}},\"prev\":\"{s}\"}}\n{{\"v\":1,\"se", .{h.hash});
+    try w.print("{{\"v\":1,\"seq\":7,\"time\":9,\"kind\":\"note\",\"session\":\"s\",\"turn\":null,\"call\":null,\"source\":\"app\",\"data\":{{}},\"prev\":\"{s}\"", .{h.hash});
+    const crash_mac = macNext(&l.key, l.last_mac, w.buf.items);
+    try w.print(",\"mac\":\"{s}\"}}\n{{\"v\":1,\"se", .{std.fmt.bytesToHex(crash_mac, .lower)});
     _ = c.write(fd, w.buf.items.ptr, w.buf.items.len);
     _ = c.close(fd);
     _ = try l.append("note", "app", "{}", "s", null, null, 10);
@@ -1120,6 +1289,25 @@ test "the audit log finds a change of a record and repairs a crash" {
     const found = try l.query(a, .{ .text = "partial record" }, 10, false);
     defer a.free(found);
     try std.testing.expectEqual(@as(usize, 1), found.len);
+    // A cut of the last record, of the index, and of the header shows:
+    // the head record outside the folder has the mac of the cut record.
+    {
+        const last = l.readHeader();
+        const e = l.readEntry(last.seq).?;
+        const before = l.readEntry(last.seq - 1).?;
+        const prev_line = try l.readLine(before);
+        defer a.free(prev_line);
+        var lp: [600]u8 = undefined;
+        const lf = try std.fmt.bufPrintSentinel(&lp, "{s}/log-{d:0>6}.jsonl", .{ dir, e.file }, 0);
+        const lfd = c.open(lf.ptr, .{ .ACCMODE = .WRONLY }, @as(c.mode_t, 0));
+        _ = c.ftruncate(lfd, e.off);
+        _ = c.close(lfd);
+        _ = c.ftruncate(l.index_fd, @intCast(header_size + (last.seq - 1) * @sizeOf(Entry)));
+        _ = l.writeHeader(.{ .seq = last.seq - 1, .file = before.file, .hash = hexHash(prev_line) });
+        r = try l.verify(null);
+        try std.testing.expect(!r.ok);
+        try std.testing.expectEqualStrings("the head record is not the last record", r.reason);
+    }
     // A change of one byte of an old record breaks the chain.
     var p1: [600]u8 = undefined;
     const f1 = try std.fmt.bufPrintSentinel(&p1, "{s}/log-000001.jsonl", .{dir}, 0);
