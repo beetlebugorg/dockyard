@@ -27,7 +27,7 @@ TONES = {
 }
 # The status tones are made only for the icons that use them.
 STATUS = {"check": ["ok"], "error": ["danger"], "blocked": ["danger"], "shield": ["warn"],
-          "shieldcheck": ["ok"], "globe": ["accent"], "bolt": ["accent"], "build": ["white"], "chevron": ["white"], "export": ["white"],
+          "shieldcheck": ["ok"], "globe": ["accent"], "bolt": ["accent"], "build": ["white", "warn"], "chevron": ["white"], "export": ["white"],
           "play": ["ok", "white"], "stop": ["danger"], "prompt": ["accent"], "activity": ["white"],
           "apps": ["white"], "terminal": ["white"]}
 

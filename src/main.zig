@@ -35,7 +35,7 @@ const guest_release = @import("guest_release.zig");
 const monitor = @import("monitor.zig");
 const monitor_script = @embedFile("monitor.tcl");
 
-const window_script = @embedFile("dockyard.tcl");
+const window_script = @embedFile("ui-icons.tcl") ++ @embedFile("theme.tcl") ++ @embedFile("ui.tcl") ++ @embedFile("dockyard.tcl");
 /// The icon of the window and the logo of the bar (tools/icons.py).
 const icon_script = @embedFile("icon.tcl");
 
