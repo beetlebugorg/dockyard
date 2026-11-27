@@ -129,6 +129,10 @@ const Run = struct {
         try apps.register(&r.it, std.testing.io, folder);
         try host.setVars(&r.it, .{ .project = folder, .agent = agent, .shell = test_shell, .path = test_path, .agent_name = "no-such-agent-program", .runner = exePath(), .headless = true });
         r.head = try ztk.headless.Headless.init(gpa);
+        // The waits of the tests (`after 20` and `vwait`) wait for a child
+        // process, so they need the clock of the system. With the clock
+        // of the headless backend, 250 waits of 20 ms end in a few ms.
+        r.head.real_clock = true;
         r.app = try ztk.App.init(gpa, &r.it, .{ .platform = r.head.platform(), .app_name = "dockyard" });
         r.app.runScript(window_script) catch |e| {
             defer r.stop();
