@@ -66,6 +66,11 @@ fn exists(path: []const u8) bool {
     return true;
 }
 
+fn readable(path: []const u8) bool {
+    Io.Dir.cwd().access(the_io, path, .{ .read = true }) catch return false;
+    return true;
+}
+
 /// `dockyard::build::host`: the target of this computer, for example
 /// `x86_64-linux`.
 fn cmdHost(it: *ztcl.Interp, argv: []const ztcl.Value, _: ?*ztcl.interp.Cmd) ztcl.Error!ztcl.Value {
@@ -142,7 +147,7 @@ fn build(a: std.mem.Allocator, target: []const u8) !BuildResult {
     const windows = std.mem.endsWith(u8, target, "-windows");
     const ico = try std.fs.path.joinZ(a, &.{ project, "icon.ico" });
     const png = try std.fs.path.joinZ(a, &.{ project, "icon.png" });
-    const icon: ?[:0]const u8 = if (windows and std.c.access(ico.ptr, 4) == 0) ico else if (std.c.access(png.ptr, 4) == 0) png else null;
+    const icon: ?[:0]const u8 = if (windows and readable(ico)) ico else if (readable(png)) png else null;
     if (icon) |p| {
         try args.append(a, "--icon");
         try args.append(a, p);
