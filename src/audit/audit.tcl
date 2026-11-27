@@ -56,6 +56,7 @@ proc ::dockyard::audit::guest {kind d} {
     switch -- $kind {
         hook {hook $d $opts}
         exec - exit {Log $kind $d -source helper {*}$opts}
+        note {Log note $d -source helper {*}$opts}
         default {Log note [list text "an event of the guest of type $kind"] -source helper {*}$opts}
     }
 }

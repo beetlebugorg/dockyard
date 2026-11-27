@@ -327,11 +327,42 @@ proc ::dockyard::sandbox::events {vm script} {
     return $ch
 }
 
+# The lines of the events, up to max_line bytes each. A longer line is
+# skipped up to its newline, and the script gets an event of type note
+# for it.
+namespace eval ::dockyard::sandbox {
+    variable max_line 65536
+    variable linebuf
+    array set linebuf {}
+}
 proc ::dockyard::sandbox::Lines {ch script} {
-    while {[gets $ch line] >= 0} {
-        if {$line ne ""} {{*}$script [ParseEvent $line]}
+    variable max_line
+    variable linebuf
+    if {![info exists linebuf($ch)]} {set linebuf($ch) [list {} 0]}
+    lassign $linebuf($ch) buf skip
+    append buf [read $ch]
+    while {[set nl [string first \n $buf]] >= 0} {
+        set line [string range $buf 0 [expr {$nl - 1}]]
+        set buf [string range $buf [expr {$nl + 1}] end]
+        if {$skip} {
+            set skip 0
+        } elseif {[string length $line] > $max_line} {
+            {*}$script [list type note text "an event line over $max_line bytes"]
+        } elseif {$line ne ""} {
+            {*}$script [ParseEvent $line]
+        }
     }
-    if {[eof $ch]} {close $ch}
+    if {[string length $buf] > $max_line} {
+        if {!$skip} {{*}$script [list type note text "an event line over $max_line bytes"]}
+        set buf {}
+        set skip 1
+    }
+    if {[eof $ch]} {
+        close $ch
+        unset linebuf($ch)
+        return
+    }
+    set linebuf($ch) [list $buf $skip]
 }
 
 # The JSON of the helper is flat: numbers, strings, and one list of
