@@ -91,10 +91,7 @@ Click Build. For each selected target, dockyard copies the ztk program of the ta
 
 The ztk programs of the targets are in `lib/ztk/runtime/TARGET/` next to the `bin` folder of dockyard. `zig build` makes the program of the target of the build. `zig build -Druntimes=all` makes the programs of all the targets, and `-Druntimes=x86_64-linux,x86_64-windows` makes a list of them.
 
-These limits come from the builds of ztk on another system:
-
-- A Linux program for another target has the direct and the headless backends, with no Wayland window.
-- A macOS program made on Linux or Windows has only the headless backend. The AppKit backend needs the macOS SDK, so build dockyard on a Mac for a macOS window.
+A program for another target has the full GUI backends of that target when its ztk program comes from `zig build runtimes` in a source build of ztk: Wayland, X11, and Vulkan on Linux, AppKit and Metal on macOS, and Win32 on Windows. ztk PR 295 checked this. The release archives and the Homebrew package of ztk do not have these programs yet. With an installed ztk, give the program of another target with `--runner`.
 
 ## The app list
 
