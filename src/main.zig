@@ -215,7 +215,10 @@ pub fn main(init: std.process.Init) !void {
         const sock = try host.controlPath(arena, runtime, std.fs.path.dirname(f) orelse "/");
         const err_sink: ztcl.Output = .{ .ctx = err, .write = write };
         ctl = control.start(arena, app, sock, err_sink, exitNow) catch |e| blk: {
-            err.print("dockyard: no MCP bridge: {s}\n", .{@errorName(e)}) catch {};
+            // The stderr of the child is buffered: the line goes out now, so
+            // the log of the preview shows why the bridge is missing.
+            err.print("dockyard: no MCP bridge at {s}: {s}\n", .{ sock, @errorName(e) }) catch {};
+            err.flush() catch {};
             break :blk null;
         };
     }
