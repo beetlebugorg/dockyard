@@ -116,7 +116,7 @@ label .preview.con.k -text "Ctrl+`"
 ztk::class .preview.con.k add kbd
 pack .preview.con.i -side left -padx {12 6} -pady 6
 pack .preview.con.t .preview.con.n -side left -padx {0 8}
-pack .preview.con.k -side right -padx 12
+pack .preview.con.k -side right -padx {0 14}
 bind .preview.con <ButtonPress-1> ::dockyard::ui::toggleConsole
 bind .preview.con.t <ButtonPress-1> ::dockyard::ui::toggleConsole
 ztk::terminal .preview.log -width 60 -height 8 -cwd /
