@@ -26,7 +26,7 @@
 const std = @import("std");
 const ztcl = @import("ztcl");
 const ztk = @import("ztk");
-const sock = @import("sock.zig");
+const sock = @import("../sandbox/sock.zig");
 
 const bridge_script = @embedFile("bridge.tcl");
 

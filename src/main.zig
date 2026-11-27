@@ -25,25 +25,25 @@ const std = @import("std");
 const Io = std.Io;
 const ztcl = @import("ztcl");
 const ztk = @import("ztk");
-const host = @import("host.zig");
-const control = @import("control.zig");
-const mcp = @import("mcp.zig");
-const apps = @import("apps.zig");
-const proxy = @import("proxy.zig");
-const sandbox = @import("sandbox.zig");
-const guest_release = @import("guest_release.zig");
-const monitor = @import("monitor.zig");
-const audit = @import("audit.zig");
-const crash = @import("crash.zig");
+const host = @import("app/host.zig");
+const control = @import("app/control.zig");
+const mcp = @import("app/mcp.zig");
+const apps = @import("app/apps.zig");
+const proxy = @import("sandbox/proxy.zig");
+const sandbox = @import("sandbox/sandbox.zig");
+const guest_release = @import("sandbox/guest_release.zig");
+const monitor = @import("sandbox/monitor.zig");
+const audit = @import("audit/audit.zig");
+const crash = @import("app/crash.zig");
 
 /// A panic writes a crash report first (`crash.zig`).
 pub const panic = std.debug.FullPanic(crash.panic);
-const monitor_script = @embedFile("monitor.tcl");
-const audit_script = @embedFile("audit.tcl");
+const monitor_script = @embedFile("sandbox/monitor.tcl");
+const audit_script = @embedFile("audit/audit.tcl");
 
-const window_script = @embedFile("ui-icons.tcl") ++ @embedFile("theme.tcl") ++ @embedFile("ui.tcl") ++ @embedFile("activity.tcl") ++ @embedFile("dockyard.tcl");
+const window_script = @embedFile("ui/ui-icons.tcl") ++ @embedFile("ui/theme.tcl") ++ @embedFile("ui/ui.tcl") ++ @embedFile("ui/activity.tcl") ++ @embedFile("app/dockyard.tcl");
 /// The icon of the window and the logo of the bar (tools/icons.py).
-const icon_script = @embedFile("icon.tcl");
+const icon_script = @embedFile("ui/icon.tcl");
 
 const usage =
     \\usage: dockyard [flags] [project folder]

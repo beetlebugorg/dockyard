@@ -9,11 +9,11 @@ const std = @import("std");
 const Io = std.Io;
 const ztcl = @import("ztcl");
 const ztk = @import("ztk");
-const host = @import("host.zig");
+const host = @import("app/host.zig");
 const test_options = @import("test_options");
-const mcp = @import("mcp.zig");
-const apps = @import("apps.zig");
-const audit = @import("audit.zig");
+const mcp = @import("app/mcp.zig");
+const apps = @import("app/apps.zig");
+const audit = @import("audit/audit.zig");
 
 const on_win = @import("builtin").os.tag == .windows;
 
@@ -58,18 +58,18 @@ var next_project = std.atomic.Value(u32).init(0);
 
 test {
     _ = host;
-    _ = @import("mcp.zig");
-    _ = @import("apps.zig");
-    _ = @import("proxy.zig");
-    _ = @import("guest_test.zig");
-    _ = @import("sandbox.zig");
-    _ = @import("guest_release.zig");
-    _ = @import("monitor.zig");
-    _ = @import("audit.zig");
-    _ = @import("sock.zig");
+    _ = @import("app/mcp.zig");
+    _ = @import("app/apps.zig");
+    _ = @import("sandbox/proxy.zig");
+    _ = @import("sandbox/guest_test.zig");
+    _ = @import("sandbox/sandbox.zig");
+    _ = @import("sandbox/guest_release.zig");
+    _ = @import("sandbox/monitor.zig");
+    _ = @import("audit/audit.zig");
+    _ = @import("sandbox/sock.zig");
 }
 
-const window_script = @embedFile("audit.tcl") ++ @embedFile("icon.tcl") ++ @embedFile("ui-icons.tcl") ++ @embedFile("theme.tcl") ++ @embedFile("ui.tcl") ++ @embedFile("activity.tcl") ++ @embedFile("dockyard.tcl");
+const window_script = @embedFile("audit/audit.tcl") ++ @embedFile("ui/icon.tcl") ++ @embedFile("ui/ui-icons.tcl") ++ @embedFile("ui/theme.tcl") ++ @embedFile("ui/ui.tcl") ++ @embedFile("ui/activity.tcl") ++ @embedFile("app/dockyard.tcl");
 
 const Run = struct {
     it: ztcl.Interp = undefined,

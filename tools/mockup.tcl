@@ -2,7 +2,7 @@
 # in the preview child of dockyard (`dockyard --run`) on the headless
 # backend, once for each view and each color scheme. The file view.txt
 # next to the script names the view: main, build, apps, activity, or
-# first. The widgets show sample data only. src/ui.tcl has the real
+# first. The widgets show sample data only. src/ui/ui.tcl has the real
 # window.
 
 set f [open /view.txt]

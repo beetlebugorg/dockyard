@@ -1025,7 +1025,7 @@ test "the audit log chains, indexes, and filters the records" {
     };
     try std.testing.expectEqualStrings("session turn tool exec net blocked file turn session", try T.s(&it, "lmap r [dockyard::audit query -after 6] {dict get $r kind}"));
     try std.testing.expectEqualStrings("7", try T.s(&it, "dockyard::audit count -after 6 -turn [dict get [dockyard::audit context] session].1"));
-    _ = try it.eval(@embedFile("monitor.tcl"));
+    _ = try it.eval(@embedFile("../sandbox/monitor.tcl"));
     const r = try T.s(&it,
         \\set q [dockyard::audit query -after 6]
         \\list [lindex [::dockyard::monitor::describe [lindex $q 4]] 1] [string match "*tool  start Edit  /work/a.tcl" [lindex [::dockyard::monitor::describe [lindex $q 2]] 0]] \

@@ -9,7 +9,7 @@ size, and the PNG bytes of each image (Windows Vista and later read PNG
 images in an .ico file). The social image is a 1280x640 SVG with the
 logo and the name, rendered the same way.
 
-It also writes src/icon.tcl, the icon of the window and the logo of
+It also writes src/ui/icon.tcl, the icon of the window and the logo of
 the bar as base64 PNG data.
 
 usage: python3 -I tools/icons.py
@@ -78,7 +78,7 @@ def main():
     (OUT / "favicon.svg").write_text(LOGO.read_text())
     (OUT / "favicon.ico").write_bytes(ico(pngs, [16, 32, 48]))
     # The icon of the window and the logo of the bar, for src/main.zig.
-    tcl = ROOT / "src" / "icon.tcl"
+    tcl = ROOT / "src" / "ui" / "icon.tcl"
     tcl.write_text("# Made by tools/icons.py from assets/logo.svg: the icon of the window\n"
                    "# (64 pixels) and the logo of the bar (20 pixels), as base64 PNG data.\n"
                    "namespace eval ::dockyard {}\n"
