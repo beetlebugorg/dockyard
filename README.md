@@ -17,6 +17,7 @@ dockyard is itself a ztk app, on the [ztcl](https://github.com/beetlebugorg/ztcl
 | **Build** | One program file for each of six targets: Linux, macOS, and Windows, on x86-64 and arm64. |
 | **Apps** | A list of your apps and their programs, with Launch and Open. |
 | **Sandbox** | `--sandbox` runs the terminal pane in a small Linux VM, with a network allow list. A first form, on Linux. |
+| **Activity** | Each prompt, tool call, command, file change, connection, blocked attempt, and build of the agent, in turns, with filters, search, and export. |
 | **Monitor** | `--monitor` shows each network call, program, and file change of the sandbox, live. |
 | **Skill** | A skill for Claude that builds the same apps in a chat, with no dockyard window. |
 
@@ -27,6 +28,8 @@ dockyard is itself a ztk app, on the [ztcl](https://github.com/beetlebugorg/ztcl
 ![dockyard in the dark color scheme](docs/images/dockyard-dark.png)
 
 </details>
+
+![The Activity view: the turns of the agent with its tool calls, commands, files, and connections](docs/images/activity-light.png)
 
 ## Install
 

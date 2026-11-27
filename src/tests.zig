@@ -69,7 +69,7 @@ test {
     _ = @import("sock.zig");
 }
 
-const window_script = @embedFile("audit.tcl") ++ @embedFile("icon.tcl") ++ @embedFile("ui-icons.tcl") ++ @embedFile("theme.tcl") ++ @embedFile("ui.tcl") ++ @embedFile("dockyard.tcl");
+const window_script = @embedFile("audit.tcl") ++ @embedFile("icon.tcl") ++ @embedFile("ui-icons.tcl") ++ @embedFile("theme.tcl") ++ @embedFile("ui.tcl") ++ @embedFile("activity.tcl") ++ @embedFile("dockyard.tcl");
 
 const Run = struct {
     it: ztcl.Interp = undefined,
@@ -445,4 +445,30 @@ test "the Build button makes the program of this computer, and the app list show
     _ = try r.eval("::dockyard::apps::show");
     const rows = try r.eval("set ::dockyard::apps::rows");
     try std.testing.expect(std.mem.indexOf(u8, rows, program) != null);
+}
+
+test "the Activity view groups the events by turn and filters them" {
+    var r: Run = .{ .arena = .init(std.testing.allocator) };
+    try r.start(test_shell, "label .l -text hi\npack .l\n");
+    defer r.stop();
+    _ = try r.eval(
+        \\set t [clock milliseconds]
+        \\::dockyard::activity::add [list \
+        \\    [list kind hook time $t event UserPromptSubmit prompt "Make a timer"] \
+        \\    [list kind hook time $t event PreToolUse tool Write path /work/main.tcl] \
+        \\    [list kind net time $t host example.com port 443 result blocked up 0 down 0 ms 0] \
+        \\    [list kind exec time $t pid 12 ppid 1 argv {wget example.com}]]
+    );
+    // A turn row and three event rows: the prompt is the head of the turn.
+    try std.testing.expectEqualStrings("{turn 1} {event 1} {event 2} {event 3}", try r.eval("set ::dockyard::activity::rows"));
+    _ = try r.eval("::dockyard::activity::filter blocked");
+    try std.testing.expectEqualStrings("{turn 1} {event 2}", try r.eval("set ::dockyard::activity::rows"));
+    try std.testing.expectEqualStrings("1 blocked", try r.eval(".sb.blocked.t cget -text"));
+    _ = try r.eval("::dockyard::activity::filter all; set ::dockyard::activity::query wget; ::dockyard::activity::refilter");
+    try std.testing.expectEqualStrings("{turn 1} {event 3}", try r.eval("set ::dockyard::activity::rows"));
+    // The detail of the blocked event, and a fold of the turn.
+    _ = try r.eval("::dockyard::activity::detail 2");
+    try std.testing.expectEqualStrings("Blocked connection", try r.eval(".activity.detail.h.t cget -text"));
+    _ = try r.eval("set ::dockyard::activity::query {}; set ::dockyard::activity::folded 1; ::dockyard::activity::refilter");
+    try std.testing.expectEqualStrings("{turn 1}", try r.eval("set ::dockyard::activity::rows"));
 }
