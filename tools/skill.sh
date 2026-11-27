@@ -11,9 +11,8 @@ limit=30000000
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 # One zig build for each target, so the build fits in 4 GB.
-for t in x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows; do
-    (cd "$root" && zig build runtimes -Druntimes=$t -Dstatic-runtimes=true -p "$work/prefix")
-done
+# One zig build for all the targets, so that Zig compiles them in parallel.
+(cd "$root" && zig build runtimes -Druntimes=x86_64-linux,aarch64-linux,x86_64-macos,aarch64-macos,x86_64-windows,aarch64-windows -Dstatic-runtimes=true -p "$work/prefix")
 cp -R "$root/skill/dockyard-app" "$work/dockyard-app"
 mkdir -p "$work/dockyard-app/runtimes"
 for d in "$work/prefix/lib/ztk/runtime"/*; do

@@ -12,9 +12,12 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request cancels the run of its old commit. Runs
+# on main do not cancel each other: each one completes and saves the Zig
+# cache.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   ZIG_VERSION: "0.17.0"
@@ -33,14 +36,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y glslc libwayland-dev libxkbcommon-dev wayland-protocols
-      - name: Build
+      # One zig build for the program and the tests, so that Zig
+      # compiles them in parallel.
+      - name: Build and test
         run: |
           ulimit -v 6000000
-          zig build
-      - name: Test
-        run: |
-          ulimit -v 6000000
-          zig build test
+          zig build install test
 
   skill:
     name: Skill (Linux)
