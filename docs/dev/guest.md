@@ -1,27 +1,35 @@
 # The helper of the sandbox guest
 
-`dockyard-guest` (`src/guest/main.zig`) is the helper of dockyard in the guest of `ztcl::vm` (issue 13). It gives the terminal pane a PTY in the guest, the guest programs a proxy port, and the monitor (issue 15) the programs that run. It uses no libc. `zig build` installs it for each guest architecture in `zig-out/lib/dockyard/guest/ARCH/dockyard-guest`. It is 65,544 bytes on x86-64 (`ls -l`, 2026-11-27). The JSON parser of the hooks (`std.json`) is most of it: the helper was 16,792 bytes before.
+`dockyard-guest` (`src/guest/main.zig`) is the helper of dockyard in the guest of `ztcl::vm` (issue 13). It gives the terminal pane a PTY in the guest, the guest programs a proxy port, and the monitor (issue 15) the programs that run. It uses no libc. `zig build` installs it for each guest architecture in `zig-out/lib/dockyard/guest/ARCH/dockyard-guest`. It is 22,304 bytes on x86-64 (`zig build-exe -target x86_64-linux-musl -OReleaseSmall -fstrip -fsingle-threaded`, `ls -l`, 2026-11-27). The hooks have a small JSON reader of their own (`Json` in `main.zig`): with `std.json` the same build was 65,728 bytes.
 
 ## The start
 
 `sandbox.tcl` (`dockyard::sandbox::boot`) starts the guest and then the helper:
 
 1. `ztcl::vm create` and `start`, with the project folder as the share `share0`. The agent of ztcl mounts `share0` at `/mnt/share`, and a bind mount puts it at `/work`. A second mount of the same 9p tag fails with EBUSY.
-2. `ztcl::vm exec` of `/bin/busybox sh -c {base64 -d > /tmp/dockyard-guest ...}` copies the helper into the tmpfs of the guest. The input of `exec` goes as UTF-8 text, so the bytes go as base64. The tools disk of `vm.md` will have the helper, and this step goes away.
-3. `ztcl::vm exec` of `/tmp/dockyard-guest serve`. The helper mounts devpts at `/dev/pts` when the guest has none, opens its ports, goes to the background, and the `exec` ends.
+2. `ztcl::vm exec -binary 1` of `/bin/busybox sh -c {cat > /tmp/dockyard-guest ...}` copies the helper into the tmpfs of the guest.
+3. `ztcl::vm exec` of `/tmp/dockyard-guest serve --relay PORT`. The helper mounts devpts at `/dev/pts` when the guest has none, opens its ports, goes to the background, and the `exec` ends.
 
 On an x86-64 Linux with KVM, steps 1 to 3 take about 45 ms.
+
+With `-image NAME`, the guest is a signed release of the store (`os/tools/manifest.sh`), and its second disk is the tools disk. The helper comes from that disk:
+
+1. `ztcl::vm create -image NAME` and `start`, with the share as above.
+2. One `ztcl::vm exec` of a shell script (`tools_mount` in `sandbox.tcl`). It mounts the squashfs of `/dev/dm-1` read-only at `/tmp/tools`, then `proc`, a recursive bind of `/dev`, a tmpfs at `tmp`, `root`, and `inbox`, and the share at its folder of the disk (`/work`). Then it runs `chroot /tmp/tools /usr/libexec/dockyard/dockyard-guest serve --relay PORT`.
+
+The pane and its programs run in the chroot, so they find node, git, and Zig at the usual paths. `dockyard::sandbox::path VM PATH` gives the path in the guest of a path of the pane, for an `exec` outside the chroot. The hook command of the settings is the helper of the disk.
+
+`dockyard --sandbox DIR` boots a release when `DIR` has a `manifest.json`. The app copies the manifest, its signature, and the files of its architecture to `.dockyard/guest/` of the project (`src/guest_release.zig`), and skips the copy when the manifest there is the same. It installs the release with `ztcl::vm image install` when the current counter of the store is another one. A Debug build trusts the test key of dockyard (`test_only`, a name that ends in `-test`). A release build trusts no key of dockyard yet.
 
 ## The ports
 
 | vsock port | Use |
 |---|---|
 | 7100 | A terminal session: a program on a PTY. |
-| 7101 | The relay control: one id for each TCP client of the proxy port. |
-| 7102 | The relay data: the host sends an id, then the bytes go both ways. |
+| 7101 | The relay, on the host: the helper connects once for each TCP client of the proxy port. |
 | 7103 | The events: one JSON line for each program that starts or ends, and for each hook call of the agent program. |
 
-The host connects to each port. The guest connects to nothing on the host, so the same helper works with each backend of `ztcl::vm`.
+The host connects to ports 7100 and 7103 of the guest. The helper connects to the relay port of the host (CID 2), where `ztcl::vm listen` accepts the connection.
 
 ## A session (port 7100)
 
@@ -40,15 +48,15 @@ Each message is a frame, as in the agent of ztcl (`docs/dev/vm-agent.md` of ztcl
 
 The first frame is `open`. The program starts in a new session with the PTY as its terminal. `argv[0]` is a path: there is no search of `PATH`. A failed start gives `error` and no `started`. The connection ends after `exit`. A host that closes the connection ends the program with `SIGKILL`.
 
-## The proxy port (ports 7101 and 7102)
+## The proxy port (port 7101 of the host)
 
 The helper listens on `127.0.0.1:3128` of the guest. The kernel starts with the loopback device down, so the helper first sets the flag `IFF_UP` of `lo` (the ioctls `SIOCGIFFLAGS` and `SIOCSIFFLAGS` on a socket of `AF_INET`). The guest programs get `HTTPS_PROXY=http://127.0.0.1:3128`.
 
-1. The host keeps one connection on port 7101. For each new TCP client of port 3128, the helper sends the id of the client as `u32`. It sends the ids of waiting clients again after a new control connection.
-2. For each id, the host opens a connection on port 7102 and sends the id as `u32`.
-3. The helper copies the bytes between the client and that connection. The host gives the connection to the egress proxy (`dockyard::proxy attach`), which reads the `CONNECT` request and checks the allow list.
+1. `dockyard::sandbox::boot` listens on a relay port of the host with `ztcl::vm listen`, before the helper starts, and gives the port to the helper (`serve --relay PORT`). On KVM the vsock ports of the host are one space for the whole host, so the port is the first free one from 7101.
+2. For each new TCP client of port 3128, a child of the helper connects to the relay port of the host and copies the bytes between the client and that connection.
+3. After `dockyard::sandbox::relay VM`, the host gives each connection to the egress proxy (`dockyard::proxy attach`), which reads the `CONNECT` request and checks the allow list. Before it, the host closes the connection.
 
-A client with no data connection after 10 seconds is closed. A guest kernel with no IPv4 has no port 3128, and the helper writes `no IPv4 in this guest` on stderr.
+With no listener on the host, the helper closes the client. A guest kernel with no IPv4 has no port 3128, and the helper writes `no IPv4 in this guest` on stderr.
 
 ## The events (port 7103)
 

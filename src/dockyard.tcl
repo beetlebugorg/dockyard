@@ -397,6 +397,19 @@ proc ::dockyard::vm::start {} {
     if {$guest eq ""} {
         .term write "\x1b\[2m\[the sandbox starts\]\x1b\[0m\r\n"
         set boot [list -kernel $dir/$::dockyard::sandbox_kernel -initrd $dir/agent.cpio -helper $dir/dockyard-guest -memory 512]
+        if {$::dockyard::sandbox_image ne ""} {
+            # A signed release: install it when the current release of the
+            # store has a different counter, then boot it.
+            set current {}
+            foreach i [ztcl::vm image list] {
+                if {[dict get $i name] eq $::dockyard::sandbox_image} {set current [dict get $i current]}
+            }
+            if {$current ne $::dockyard::sandbox_counter && [catch {ztcl::vm image install $dir} msg]} {
+                .term write "sandbox: $msg\r\n"
+                return
+            }
+            set boot [list -image $::dockyard::sandbox_image -memory 512]
+        }
         if {[catch {set guest [::dockyard::sandbox::boot {*}$boot -share {/ /work rw}]} msg opts]} {
             if {[dict get $opts -errorcode] ne "ZTCL VM SHARE"} {
                 .term write "sandbox: $msg\r\n"
@@ -417,7 +430,7 @@ proc ::dockyard::vm::start {} {
         tick
     }
     lassign [.term size] cols rows
-    set cwd [expr {[catch {ztcl::vm exec $guest /bin/busybox test -d /work} r] || [dict get $r exit] ? "/" : "/work"}]
+    set cwd [expr {[catch {ztcl::vm exec $guest /bin/busybox test -d [::dockyard::sandbox::path $guest /work]} r] || [dict get $r exit] ? "/" : "/work"}]
     set session [::dockyard::sandbox::session $guest -argv $::dockyard::sandbox_argv -cwd $cwd -rows $rows -cols $cols \
         -env [list TERM=xterm-256color HOME=/root PATH=/tools/bin:/bin:/sbin:/usr/bin \
             HTTPS_PROXY=http://127.0.0.1:3128 HTTP_PROXY=http://127.0.0.1:3128] \
@@ -527,8 +540,8 @@ proc ::dockyard::vm::share {path} {
         close $f
     } msg]} {return [note $msg]}
     set name [file tail $path]
-    set r [ztcl::vm exec $guest -stdin [binary encode base64 $data] -- /bin/busybox sh -c \
-        "/bin/busybox mkdir -p /inbox && /bin/busybox base64 -d > '/inbox/$name' && /bin/busybox chmod 444 '/inbox/$name'"]
+    set r [ztcl::vm exec $guest -binary 1 -stdin $data -- /bin/busybox sh -c \
+        {/bin/busybox mkdir -p "$1" && /bin/busybox cat > "$1/$2" && /bin/busybox chmod 444 "$1/$2"} sh [::dockyard::sandbox::path $guest /inbox] $name]
     if {[dict get $r exit] != 0} {return [note "The share failed: [dict get $r stderr]"]}
     if {![info exists ::dockyard::vm::shared($name)] && [winfo exists .shares]} {.shares.list insert end $name}
     set ::dockyard::vm::shared($name) $path
@@ -544,7 +557,7 @@ proc ::dockyard::vm::revokeSelected {} {
 
 proc ::dockyard::vm::revoke {name} {
     variable guest
-    if {$guest ne ""} {ztcl::vm exec $guest -- /bin/busybox rm -f "/inbox/$name"}
+    if {$guest ne ""} {ztcl::vm exec $guest -- /bin/busybox rm -f [::dockyard::sandbox::path $guest /inbox]/$name}
     unset -nocomplain ::dockyard::vm::shared($name)
     if {[winfo exists .shares]} {
         set i [lsearch -exact [.shares.list get 0 end] $name]
@@ -557,13 +570,13 @@ proc ::dockyard::vm::revoke {name} {
 proc ::dockyard::vm::export {gpath} {
     variable guest
     if {$guest eq ""} {return [note "The sandbox does not run."]}
-    set r [ztcl::vm exec $guest -- /bin/busybox base64 $gpath]
+    set r [ztcl::vm exec $guest -binary 1 -- /bin/busybox cat [::dockyard::sandbox::path $guest $gpath]]
     if {[dict get $r exit] != 0} {return [note "The export failed: [string trim [dict get $r stderr]]"]}
     file mkdir /exports
     set out /exports/[file tail $gpath]
     set f [open $out wb]
     fconfigure $f -translation binary
-    puts -nonewline $f [binary decode base64 [dict get $r stdout]]
+    puts -nonewline $f [dict get $r stdout]
     close $f
     log share [list op export name $gpath]
     note "$out has the file."

@@ -9,6 +9,7 @@ const builtin = @import("builtin");
 const ztcl = @import("ztcl");
 const proxy = @import("proxy.zig");
 const sandbox = @import("sandbox.zig");
+const guest_release = @import("guest_release.zig");
 const test_options = @import("test_options");
 const c = std.c;
 
@@ -19,7 +20,8 @@ fn z(a: std.mem.Allocator, s: []const u8) ![:0]const u8 {
 }
 
 fn tempDir(a: std.mem.Allocator, name: []const u8) ![:0]const u8 {
-    const d = try std.fmt.allocPrint(a, "/tmp/dockyard-test-{s}-{d}", .{ name, c.getpid() });
+    const tmp = if (c.getenv("TMPDIR")) |t| std.mem.sliceTo(t, 0) else "/tmp";
+    const d = try std.fmt.allocPrint(a, "{s}/dockyard-test-{s}-{d}", .{ tmp, name, c.getpid() });
     const dz = try z(a, d);
     _ = c.mkdir(dz.ptr, 0o755);
     return dz;
@@ -181,9 +183,11 @@ test "the guest helper runs a program on a PTY, relays the proxy port, and gives
 
     // A hook of the agent program: the JSON on stdin becomes one flat
     // line of the events stream.
-    try runHook(helper, hooks, "{\"session_id\":\"s1\",\"hook_event_name\":\"PostToolUse\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/work/main.tcl\",\"old_string\":\"a\\nb\"}}");
+    // The other values (arrays, numbers, null, a "}" in a string) are
+    // skipped, and the escapes of the strings are decoded.
+    try runHook(helper, hooks, "{\"session_id\":\"s1\", \"n\": -1.5e3, \"m\": null, \"hook_event_name\":\"PostToolUse\",\"tool_name\":\"Edit\",\"prompt\":\"\\u00e9\\ud83d\\ude00 \\\"q\\\"\\tx\",\"tool_input\":{\"edits\":[{\"a\":1,\"b\":[true,false,{\"c\":\"}\"}]}],\"file_path\":\"/work/main.tcl\",\"old_string\":\"a\\nb\"}}");
     const hk = try readUntil(ev, &ebuf, "main.tcl\"}");
-    const want = "\"event\":\"PostToolUse\",\"tool\":\"Edit\",\"session\":\"s1\",\"path\":\"/work/main.tcl\"}";
+    const want = "\"event\":\"PostToolUse\",\"tool\":\"Edit\",\"session\":\"s1\",\"prompt\":\"\u{e9}\u{1f600} \\\"q\\\"\\u0009x\",\"path\":\"/work/main.tcl\"}";
     std.testing.expect(std.mem.indexOf(u8, hk, "{\"type\":\"hook\"") != null and std.mem.indexOf(u8, hk, want) != null) catch |e| {
         std.debug.print("hook line: {s}\n", .{hk});
         return e;
@@ -202,14 +206,18 @@ test "the guest helper runs a program on a PTY, relays the proxy port, and gives
     var alen: c.socklen_t = @sizeOf(c.sockaddr.in);
     _ = c.getsockname(server, @ptrCast(&addr), &alen);
     const echo = try std.Thread.spawn(.{}, echoOnce, .{server});
-    const ctl = try connectUnix(try std.fmt.allocPrint(a, "{s}/7101", .{dir}));
-    defer _ = c.close(ctl);
+    // The host side of the relay port: the helper connects to DIR/7101
+    // once for each TCP client.
+    const lis = c.socket(c.AF.UNIX, c.SOCK.STREAM | c.SOCK.CLOEXEC, 0);
+    defer _ = c.close(lis);
+    var un: c.sockaddr.un = .{ .path = @splat(0) };
+    _ = try std.fmt.bufPrint(un.path[0 .. un.path.len - 1], "{s}/7101", .{dir});
+    try std.testing.expect(c.bind(lis, @ptrCast(&un), @sizeOf(c.sockaddr.un)) == 0);
+    _ = c.listen(lis, 4);
     const client = try connectTcp(tcp);
     defer _ = c.close(client);
-    var id: [4]u8 = undefined;
-    try std.testing.expectEqual(@as(usize, 4), (try readUntil(ctl, &id, null)).len);
-    const data = try connectUnix(try std.fmt.allocPrint(a, "{s}/7102", .{dir}));
-    try writeAll(data, &id);
+    const data = c.accept(lis, null, null);
+    try std.testing.expect(data >= 0);
     try p.attach(data);
     const req = try std.fmt.allocPrint(a, "CONNECT 127.0.0.1:{d} HTTP/1.1\r\n\r\nhello", .{std.mem.bigToNative(u16, addr.port)});
     try writeAll(client, req);
@@ -217,6 +225,19 @@ test "the guest helper runs a program on a PTY, relays the proxy port, and gives
     const reply = try readUntil(client, &rbuf, "hello");
     echo.join();
     try std.testing.expectEqualStrings("HTTP/1.1 200 Connection established\r\n\r\nhello", reply);
+    // The thread of the connection records its event at its end. The
+    // test waits for it, since p.stop frees the list of events.
+    _ = c.shutdown(client, 2);
+    var waited: u32 = 0;
+    while (waited < 5000) : (waited += 20) {
+        const evs2 = try p.take();
+        defer {
+            for (evs2) |e| std.testing.allocator.free(e.host);
+            std.testing.allocator.free(evs2);
+        }
+        if (evs2.len > 0) break;
+        sleepMs(20);
+    }
 }
 
 fn hasKvm() bool {
@@ -319,4 +340,61 @@ test "the terminal of the sandbox runs on a PTY of a guest over vsock" {
         return error.TclError;
     };
     try std.testing.expectEqualStrings("4 1 1 {Stop k1} from-guest", try it.str(res));
+}
+
+const release_script =
+    \\ztcl::vm image install release
+    \\set vm [dockyard::sandbox::boot -image dockyard-guest-test -memory 256 -share {/ /work rw}]
+    \\set work [dockyard::sandbox::path $vm /work]
+    \\set ::out ""
+    \\proc out {t} {append ::out $t}
+    \\proc ex {code} {set ::done $code}
+    \\dockyard::sandbox::hooks $vm /root
+    \\set s [dockyard::sandbox::session $vm -rows 30 -cols 100 -cwd /work -output out -exit ex \
+    \\    -env {TERM=xterm-256color HOME=/root PATH=/bin:/sbin:/usr/bin}]
+    \\dockyard::sandbox::input $s "zig version; node --jitless -e 'console.log(\"n\"+(1+1))'; git --version; /bin/busybox cat hello.txt; /bin/busybox grep -c dockyard-guest /root/.claude/settings.json; echo from-tools > out.txt; exit 5\n"
+    \\after 20000 {set ::done timeout}
+    \\vwait ::done
+    \\ztcl::vm delete $vm
+    \\file delete -force release store
+    \\set f [open out.txt]
+    \\set back [string trim [read $f]]
+    \\close $f
+    \\list $::done [string match "*0.17.0*n2*git version*from-host*\n1*" [string map {\r ""} $::out]] $work $back
+;
+
+test "the pane runs from the tools disk of a signed release" {
+    // KVM on x86-64 Linux. DOCKYARD_GUEST_RELEASE is the output folder of
+    // os/tools/manifest.sh, signed with the test key of dockyard. node
+    // runs with --jitless: its JIT stops with "Check failed: 0 == ret" in
+    // this guest (docs/dev/vm.md).
+    if (comptime !(on_linux and builtin.cpu.arch == .x86_64)) return error.SkipZigTest;
+    const src = std.mem.sliceTo(c.getenv("DOCKYARD_GUEST_RELEASE") orelse return error.SkipZigTest, 0);
+    if (!hasKvm()) return error.SkipZigTest;
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const dir = try tempDir(a, "release");
+    const rel = try std.fmt.allocPrint(a, "{s}/release", .{dir});
+    _ = c.mkdir((try z(a, rel)).ptr, 0o755);
+    for ([_][]const u8{ "manifest.json", "manifest.json.sig", "x86_64-bzImage", "x86_64-root.img", "x86_64-tools.img" }) |f|
+        try copyFile(a, try std.fmt.allocPrint(a, "{s}/{s}", .{ src, f }), try std.fmt.allocPrint(a, "{s}/{s}", .{ rel, f }));
+    try writeText(a, try std.fmt.allocPrint(a, "{s}/hello.txt", .{dir}), "from-host\n");
+
+    var it: ztcl.Interp = undefined;
+    try it.init(std.heap.page_allocator);
+    defer it.deinit();
+    const cap = ztcl.interp.Capability;
+    try it.allow(@backingInt(cap.vm) | @backingInt(cap.file) | @backingInt(cap.channels) | @backingInt(cap.event));
+    try ztcl.fsroot.setRoot(&it, dir);
+    it.event_host = .{ .now = ticks, .sleep = hostSleep };
+    it.vm_host.image_keys = &.{guest_release.test_key};
+    // A store of its own, so the test leaves the store of the user as it is.
+    it.vm_host.image_store = try std.fmt.allocPrint(a, "{s}/store", .{dir});
+    _ = it.eval(sandbox.script) catch return error.TclError;
+    const res = it.eval(release_script) catch {
+        std.debug.print("{s}\n", .{it.str(it.result) catch "error"});
+        return error.TclError;
+    };
+    try std.testing.expectEqualStrings("5 1 /tmp/tools/work from-tools", try it.str(res));
 }
