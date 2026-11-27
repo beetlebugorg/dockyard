@@ -59,6 +59,12 @@ npm install -g @anthropic-ai/claude-code
 
 The [user guide](docs/guide.md) has the details.
 
+## The skill for Claude
+
+`skill/dockyard-app/` is a skill for Claude. With it, Claude writes a ztk app in its sandbox, checks it with screenshots and clicks on the headless backend, and gives you program files to download. It works in Claude Code too (`.claude/skills/`).
+
+Make the zip with `tools/skill.sh`. The zip has the skill, the `dockyard` CLI (`new`, `run`, `check`, `build`), and the ztk programs of the six targets. On 2026-11-26, `tools/skill.sh` made a zip of 18,561,947 bytes. The upload limit is 30,000,000 bytes, and CI checks the size. Upload the zip in the Skills settings of Claude. Today only the Windows programs of the skill show a window (`skill/dockyard-app/SKILL.md` has the reason).
+
 ## Limits
 
 - The terminal pane is not a sandbox. The program in it runs with the full power of your user. Read the [security model](docs/security.md).
