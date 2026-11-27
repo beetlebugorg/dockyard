@@ -161,6 +161,9 @@ fn word(out: *std.ArrayList(u8), a: std.mem.Allocator, s: []const u8) !void {
             try out.append(a, '\\');
             try out.append(a, ch);
         },
+        // Each other control character (NUL, \v, \f, and the rest) as
+        // \u00XX, so the word stays one word.
+        0...8, 11, 12, 14...31, 127 => try out.print(a, "\\u{x:0>4}", .{ch}),
         else => try out.append(a, ch),
     };
 }
@@ -177,7 +180,12 @@ fn argString(args: std.json.Value, name: []const u8, default: ?[]const u8) ![]co
 fn argInt(args: std.json.Value, name: []const u8, default: ?i64) !i64 {
     if (args == .object) if (args.object.get(name)) |v| switch (v) {
         .integer => |n| return n,
-        .float => |f| return @intFromFloat(@round(f)),
+        // A float in the exact range of an f64 integer (2^53), and
+        // finite. A larger value, NaN, or an infinity is an error.
+        .float => |f| {
+            if (!std.math.isFinite(f) or @abs(f) > 9007199254740992.0) return error.BadArgument;
+            return @intFromFloat(@round(f));
+        },
         .null => {},
         else => return error.BadArgument,
     };
@@ -227,6 +235,22 @@ test "a tool word keeps its special characters" {
     try std.testing.expectEqualStrings("::dockyard::bridge::type a\\ \\[b\\]\\ \\$c\\ \\{d\\}\\n {}", try toolScript(a, "type", args));
     try std.testing.expectError(error.BadArgument, toolScript(a, "click", args));
     try std.testing.expectError(error.UnknownTool, toolScript(a, "no-such-tool", args));
+    // A vertical tab, a form feed, and a NUL stay in one word.
+    const ctl = try std.json.parseFromSliceLeaky(std.json.Value, a, "{\"text\":\"a\\u000bb\\u000cc\\u0000d\"}", .{});
+    try std.testing.expectEqualStrings("::dockyard::bridge::type a\\u000bb\\u000cc\\u0000d {}", try toolScript(a, "type", ctl));
+}
+
+test "an integer argument refuses a float out of range" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const ok = try std.json.parseFromSliceLeaky(std.json.Value, a, "{\"x\":2.6}", .{});
+    try std.testing.expectEqual(@as(i64, 3), try argInt(ok, "x", null));
+    const big = try std.json.parseFromSliceLeaky(std.json.Value, a, "{\"x\":1e300}", .{});
+    try std.testing.expectError(error.BadArgument, argInt(big, "x", null));
+    var nan = try std.json.parseFromSliceLeaky(std.json.Value, a, "{\"x\":0.5}", .{});
+    nan.object.getPtr("x").?.* = .{ .float = std.math.nan(f64) };
+    try std.testing.expectError(error.BadArgument, argInt(nan, "x", null));
 }
 
 test "the server answers initialize and gives no answer to a notification" {
