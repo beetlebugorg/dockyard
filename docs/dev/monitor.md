@@ -4,19 +4,9 @@ Date: 2026-11-27. State: first form. The monitor shows what the programs of the 
 
 ## The log
 
-The dockyard window writes one line for each event with `dockyard::monitor log` (`src/monitor.zig`). A line is a Tcl dict with `kind`, `time` (ms since 1970), and the fields of the kind:
+The monitor shows the audit log of the project: `audit.md` has its schema, its folder, and its commands. The dockyard window writes the records with `src/audit.tcl`. The monitor reads the last 10,000 records at its start, then the new records every 250 ms (`dockyard::audit query -after SEQ`).
 
-| `kind` | Fields | Source |
-|---|---|---|
-| `net` | `host`, `port`, `result` (`allowed`, `blocked`, `failed`, `refused`), `up`, `down`, `ms` | `dockyard::proxy events`, every 250 ms |
-| `exec` | `pid`, `ppid`, `argv` | port 7103 of the guest helper (`docs/dev/guest.md`) |
-| `exit` | `pid` | the same |
-| `hook` | `event`, `tool`, `session`, and `prompt`, `path`, `command`, `pattern`, or `url` | the hooks of the agent program, through the helper (`docs/dev/guest.md`) |
-| `file` | `op`, `path` | the file watcher of the preview (`ztcl::watch`) |
-| `share` | `op` (`share`, `revoke`, `export`), `name` | the sharing panel |
-| `rule` | `rule` (`allow`, `block`), `host` | the rules of the monitor |
-
-The log is a file next to the control socket of the project (`$XDG_RUNTIME_DIR/dockyard-HASH.monitor`, or in `/tmp` with the user ID), with mode 0600. It is outside the project folder, because the guest can write the project folder. The rules file (`dockyard-HASH.rules`) is next to it.
+The rules file (`dockyard-HASH.rules`) is next to the control socket of the project (`$XDG_RUNTIME_DIR`, or `/tmp` with the user ID), with mode 0600. `dockyard::monitor rule` and `dockyard::monitor rules` (`src/monitor.zig`) write and read it.
 
 ## The front ends
 
@@ -40,4 +30,4 @@ Each step is a `share` event.
 - The file events are the changes of the watcher: writes, creates, and removes. The reads of the guest are not in the log. The 9p server of ztcl (ztcl PR 385) is the place to count them.
 - A program of the guest that runs for less than 50 ms can be missing (the helper reads `/proc` every 50 ms).
 - A file is shared from the project folder only. The drop of a file from outside the project needs a path outside the file jail.
-- The hooks of the agent program go to the log. The monitor window shows them as each other kind. The OpenTelemetry metrics of the agent program, the diff of each step, and the session replay of issue 15 are not started.
+- The hooks of the agent program go to the log as `turn`, `tool`, and `note` records. The OpenTelemetry metrics of the agent program, the diff of each step, and the session replay of issue 15 are not started.
