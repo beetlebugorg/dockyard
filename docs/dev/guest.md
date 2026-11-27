@@ -1,6 +1,6 @@
 # The helper of the sandbox guest
 
-`dockyard-guest` (`src/guest/main.zig`) is the helper of dockyard in the guest of `ztcl::vm` (issue 13). It gives the terminal pane a PTY in the guest, the guest programs a proxy port, and the monitor (issue 15) the programs that run. It uses no libc. `zig build` installs it for each guest architecture in `zig-out/lib/dockyard/guest/ARCH/dockyard-guest`. It is about 17 KB.
+`dockyard-guest` (`src/guest/main.zig`) is the helper of dockyard in the guest of `ztcl::vm` (issue 13). It gives the terminal pane a PTY in the guest, the guest programs a proxy port, and the monitor (issue 15) the programs that run. It uses no libc. `zig build` installs it for each guest architecture in `zig-out/lib/dockyard/guest/ARCH/dockyard-guest`. It is 65,544 bytes on x86-64 (`ls -l`, 2026-11-27). The JSON parser of the hooks (`std.json`) is most of it: the helper was 16,792 bytes before.
 
 ## The start
 
@@ -19,7 +19,7 @@ On an x86-64 Linux with KVM, steps 1 to 3 take about 45 ms.
 | 7100 | A terminal session: a program on a PTY. |
 | 7101 | The relay control: one id for each TCP client of the proxy port. |
 | 7102 | The relay data: the host sends an id, then the bytes go both ways. |
-| 7103 | The events: one JSON line for each program that starts or ends. |
+| 7103 | The events: one JSON line for each program that starts or ends, and for each hook call of the agent program. |
 
 The host connects to each port. The guest connects to nothing on the host, so the same helper works with each backend of `ztcl::vm`.
 
@@ -48,7 +48,7 @@ The helper listens on `127.0.0.1:3128` of the guest. The kernel starts with the 
 2. For each id, the host opens a connection on port 7102 and sends the id as `u32`.
 3. The helper copies the bytes between the client and that connection. The host gives the connection to the egress proxy (`dockyard::proxy attach`), which reads the `CONNECT` request and checks the allow list.
 
-A client with no data connection after 10 seconds is closed. A guest kernel with no IPv4 has no port 3128, and the helper writes `no IPv4 in this guest` on stderr. The guest kernel of ztcl has no `CONFIG_INET` yet.
+A client with no data connection after 10 seconds is closed. A guest kernel with no IPv4 has no port 3128, and the helper writes `no IPv4 in this guest` on stderr.
 
 ## The events (port 7103)
 
@@ -60,6 +60,18 @@ Each line is a JSON object:
 ```
 
 `time` is the clock of the guest in ms since 1970. The helper reads `/proc` every 50 ms, so a program that runs for less than 50 ms can be missing. A program counts when the helper is one of its parents: the agent of ztcl and the helper are not in the stream. `dockyard::sandbox::events` gives each line to a script as a dict.
+
+## The hooks of the agent program
+
+`dockyard::sandbox::hooks VM HOME` writes `HOME/.claude/settings.json` in the guest, with the command `/tmp/dockyard-guest hook` for the events `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notification`, `Stop`, and `SubagentStop`. HOME is `/root`, outside `/work`, so the settings of the project stay as they are.
+
+`dockyard-guest hook ?DIR?` reads the JSON of the hook on stdin (up to 256 KiB) and writes one flat line to a new file in DIR (default `/tmp/dockyard-hooks`), with a temporary name and a rename. It always exits with 0, so a hook does not block the agent program. The events stream reads the folder every 50 ms, sends each line, and removes the file:
+
+```json
+{"type":"hook","time":1795766645012,"event":"PostToolUse","tool":"Edit","session":"s1","path":"/work/main.tcl"}
+```
+
+The fields: `event` (`hook_event_name`), `tool` (`tool_name`), `session` (`session_id`), `prompt`, and from `tool_input` the fields `path` (`file_path`), `command`, `pattern`, and `url`. Each string is cut to 500 bytes at a UTF-8 boundary. A field that is not in the input is not in the line. `serve --hooks DIR` sets the folder of the stream.
 
 ## Tests
 

@@ -409,6 +409,7 @@ proc ::dockyard::vm::start {} {
         ::dockyard::proxy allow $::dockyard::sandbox_allow
         ::dockyard::sandbox::relay $guest
         ::dockyard::sandbox::events $guest ::dockyard::vm::event
+        if {[catch {::dockyard::sandbox::hooks $guest /root} msg]} {.term write "sandbox: $msg\r\n"}
         tick
     }
     lassign [.term size] cols rows

@@ -105,6 +105,27 @@ fn echoOnce(fd: c.fd_t) void {
     if (n > 0) _ = c.write(conn, &buf, @intCast(n));
 }
 
+/// Runs `helper hook DIR` with `json` on stdin, and waits for it.
+fn runHook(helper: [:0]const u8, dir: [:0]const u8, json: []const u8) !void {
+    var fds: [2]c.fd_t = undefined;
+    if (c.pipe(&fds) != 0) return error.Pipe;
+    const argv = [_:null]?[*:0]const u8{ helper.ptr, "hook", dir.ptr };
+    const envp = [_:null]?[*:0]const u8{};
+    const pid = c.fork();
+    if (pid == 0) {
+        _ = c.dup2(fds[0], 0);
+        _ = c.close(fds[1]);
+        _ = c.execve(helper.ptr, &argv, &envp);
+        c._exit(127);
+    }
+    _ = c.close(fds[0]);
+    try writeAll(fds[1], json);
+    _ = c.close(fds[1]);
+    var st: c_int = 0;
+    _ = c.waitpid(pid, &st, 0);
+    if (st != 0) return error.HookFailed;
+}
+
 test "the guest helper runs a program on a PTY, relays the proxy port, and gives the events" {
     if (comptime !on_linux) return error.SkipZigTest;
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -114,7 +135,8 @@ test "the guest helper runs a program on a PTY, relays the proxy port, and gives
     const tcp: u16 = @intCast(20000 + @mod(c.getpid(), 20000));
     const helper = try z(a, std.fmt.comptimePrint("{s}", .{test_options.guest_helper}));
     const port_z = try z(a, try std.fmt.allocPrint(a, "{d}", .{tcp}));
-    const argv = [_:null]?[*:0]const u8{ helper.ptr, "serve", "--unix", dir.ptr, "--tcp", port_z.ptr, "--foreground" };
+    const hooks = try z(a, try std.fmt.allocPrint(a, "{s}/hooks", .{dir}));
+    const argv = [_:null]?[*:0]const u8{ helper.ptr, "serve", "--unix", dir.ptr, "--tcp", port_z.ptr, "--hooks", hooks.ptr, "--foreground" };
     const envp = [_:null]?[*:0]const u8{};
     const pid = c.fork();
     if (pid == 0) {
@@ -156,6 +178,16 @@ test "the guest helper runs a program on a PTY, relays the proxy port, and gives
     const evs = try readUntil(ev, &ebuf, "\"sleep\",\"0.2\"]");
     try std.testing.expect(std.mem.indexOf(u8, evs, "{\"type\":\"exec\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, evs, "\"argv\":[\"sleep\",\"0.2\"]") != null);
+
+    // A hook of the agent program: the JSON on stdin becomes one flat
+    // line of the events stream.
+    try runHook(helper, hooks, "{\"session_id\":\"s1\",\"hook_event_name\":\"PostToolUse\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/work/main.tcl\",\"old_string\":\"a\\nb\"}}");
+    const hk = try readUntil(ev, &ebuf, "main.tcl\"}");
+    const want = "\"event\":\"PostToolUse\",\"tool\":\"Edit\",\"session\":\"s1\",\"path\":\"/work/main.tcl\"}";
+    std.testing.expect(std.mem.indexOf(u8, hk, "{\"type\":\"hook\"") != null and std.mem.indexOf(u8, hk, want) != null) catch |e| {
+        std.debug.print("hook line: {s}\n", .{hk});
+        return e;
+    };
 
     // The relay: a client of the proxy port reaches the egress proxy,
     // which connects to an allowed server.
@@ -230,16 +262,21 @@ const kvm_script =
     \\dockyard::proxy start
     \\dockyard::proxy allow {}
     \\dockyard::sandbox::relay $vm
+    \\dockyard::sandbox::hooks $vm /root
     \\after 200
     \\set s [dockyard::sandbox::session $vm -rows 30 -cols 100 -output out -exit ex]
-    \\dockyard::sandbox::input $s "/bin/busybox stty size; echo héllo; /bin/busybox ip -o link show lo; printf 'CONNECT blocked.invalid:443 HTTP/1.1\\r\\n\\r\\n' | /bin/busybox nc 127.0.0.1 3128; /bin/busybox sleep 0.3; exit 4\n"
+    \\dockyard::sandbox::input $s "/bin/busybox stty size; echo héllo; /bin/busybox ip -o link show lo; printf 'CONNECT blocked.invalid:443 HTTP/1.1\\r\\n\\r\\n' | /bin/busybox nc 127.0.0.1 3128; echo '{\"hook_event_name\":\"Stop\",\"session_id\":\"k1\"}' | /tmp/dockyard-guest hook; /bin/busybox grep -q PostToolUse /root/.claude/settings.json && echo settings-ok; /bin/busybox sleep 0.3; exit 4\n"
     \\after 10000 {set ::done timeout}
     \\vwait ::done
     \\set argv {}
-    \\foreach e $::events {if {[dict get $e type] eq "exec"} {lappend argv [dict get $e argv]}}
+    \\set hooks {}
+    \\foreach e $::events {
+    \\    if {[dict get $e type] eq "exec"} {lappend argv [dict get $e argv]}
+    \\    if {[dict get $e type] eq "hook"} {lappend hooks [dict get $e event] [dict get $e session]}
+    \\}
     \\ztcl::vm delete $vm
     \\dockyard::proxy stop
-    \\list $::done [string match "*30 100*héllo*LOOPBACK,UP*HTTP/1.1 403*" $::out] [expr {[list /bin/busybox sleep 0.3] in $argv}]
+    \\list $::done [string match "*30 100*héllo*LOOPBACK,UP*HTTP/1.1 403*settings-ok*" $::out] [expr {[list /bin/busybox sleep 0.3] in $argv}] $hooks
 ;
 
 test "the terminal of the sandbox runs on a PTY of a guest over vsock" {
@@ -270,5 +307,5 @@ test "the terminal of the sandbox runs on a PTY of a guest over vsock" {
         std.debug.print("{s}\n", .{it.str(it.result) catch "error"});
         return error.TclError;
     };
-    try std.testing.expectEqualStrings("4 1 1", try it.str(res));
+    try std.testing.expectEqualStrings("4 1 1 {Stop k1}", try it.str(res));
 }
