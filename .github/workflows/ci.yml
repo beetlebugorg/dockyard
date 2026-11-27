@@ -8,15 +8,19 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # The scheduled run builds the skill zip with all six targets and
+  # checks its size. Pull requests and pushes build two targets.
+  schedule:
+    - cron: "53 */6 * * *"
 
 permissions:
   contents: read
 
 # A new push to a pull request cancels the run of its old commit. Runs
 # on main do not cancel each other: each one completes and saves the Zig
-# cache.
+# cache. A scheduled run has a group of its own.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'schedule' && 'schedule' || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -57,8 +61,30 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y glslc
       # The skill zip has the ztk programs of all the targets. Its size
-      # must stay under the upload limit (tools/skill.sh checks it).
+      # must stay under the upload limit (tools/skill.sh checks it). Pull
+      # requests and pushes build the two targets of tools/skill-test.sh,
+      # and the scheduled run builds all six.
       - name: Build the skill zip
+        env:
+          SKILL_TARGETS: ${{ (github.event_name != 'schedule' && github.event_name != 'workflow_dispatch') && 'x86_64-linux,x86_64-windows' || '' }}
         run: tools/skill.sh
       - name: Test the skill as a sandbox uses it
         run: tools/skill-test.sh
+
+  # A failure of the scheduled full run opens an issue, so it is fixed
+  # in the next batch of work.
+  report:
+    name: Report a failure of the full run
+    if: failure() && github.event_name == 'schedule'
+    needs: [test, skill]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open an issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create -R "${{ github.repository }}" \
+            --title "The full CI run failed on $(date -u +%Y-%m-%d)" \
+            --body "The scheduled full run failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
