@@ -35,6 +35,8 @@ const monitor = @import("monitor.zig");
 const monitor_script = @embedFile("monitor.tcl");
 
 const window_script = @embedFile("dockyard.tcl");
+/// The icon of the window and the logo of the bar (tools/icons.py).
+const icon_script = @embedFile("icon.tcl");
 
 const usage =
     \\usage: dockyard [flags] [project folder]
@@ -253,7 +255,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var status: u8 = 0;
-    const main_script = if (run_path != null) try std.fmt.allocPrint(arena, "source {{/{s}}}", .{run_name}) else if (monitor_mode) monitor_script else sandbox.script ++ window_script;
+    const main_script = if (run_path != null) try std.fmt.allocPrint(arena, "source {{/{s}}}", .{run_name}) else if (monitor_mode) icon_script ++ monitor_script else sandbox.script ++ icon_script ++ window_script;
     // The timer of --exit-after-ms starts with the script.
     const script = if (exit_ms) |ms| try std.fmt.allocPrint(arena, "after {d} ::dockyard::stop\n{s}", .{ ms, main_script }) else main_script;
     if (ctl) |c| {

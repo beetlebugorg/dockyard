@@ -65,7 +65,7 @@ test {
     _ = @import("sock.zig");
 }
 
-const window_script = @embedFile("dockyard.tcl");
+const window_script = @embedFile("icon.tcl") ++ @embedFile("dockyard.tcl");
 
 const Run = struct {
     it: ztcl.Interp = undefined,
