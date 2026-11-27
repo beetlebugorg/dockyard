@@ -36,8 +36,12 @@ pub fn open() !Fd {
         if (s == win.invalid) return error.SystemResources;
         return s;
     }
-    const fd = std.c.socket(std.c.AF.UNIX, std.c.SOCK.STREAM | std.c.SOCK.CLOEXEC, 0);
+    // macOS has no SOCK_CLOEXEC: socket() with it fails with
+    // EPROTONOSUPPORT, so the flag goes on with fcntl after the call.
+    const is_mac = comptime @import("builtin").os.tag == .macos;
+    const fd = std.c.socket(std.c.AF.UNIX, std.c.SOCK.STREAM | (if (is_mac) 0 else std.c.SOCK.CLOEXEC), 0);
     if (fd < 0) return error.SystemResources;
+    if (is_mac) _ = std.c.fcntl(fd, std.c.F.SETFD, @as(c_int, std.c.FD_CLOEXEC));
     return fd;
 }
 
