@@ -5,11 +5,13 @@
 //! on the headless backend.
 
 const std = @import("std");
+const Io = std.Io;
 const ztcl = @import("ztcl");
 const ztk = @import("ztk");
 const host = @import("host.zig");
 const test_options = @import("test_options");
 const mcp = @import("mcp.zig");
+const apps = @import("apps.zig");
 
 /// The path of the dockyard program: `DOCKYARD_EXE`, or the program of
 /// the build. The path of the build can be relative to the build root,
@@ -26,6 +28,7 @@ fn exePath() [*:0]const u8 {
 test {
     _ = host;
     _ = @import("mcp.zig");
+    _ = @import("apps.zig");
 }
 
 const window_script = @embedFile("dockyard.tcl");
@@ -52,6 +55,17 @@ const Run = struct {
         const a = r.arena.allocator();
         const env = try a.dupe([:0]const u8, &.{ "PATH=/usr/bin:/bin", "HOME=/tmp", "PS1=$ " });
         try host.allow(&r.it, folder, env);
+        // The folder of the ztk programs has a link to the ztk program of
+        // the build, for the target of this computer.
+        const rt_root = try std.fmt.allocPrint(a, "{s}/.runtimes", .{folder});
+        const rt_dir = try std.fmt.allocPrint(a, "{s}/{s}", .{ rt_root, ztcl.buildnative.hostTarget() });
+        try Io.Dir.cwd().createDirPath(std.testing.io, rt_dir);
+        const built = std.fmt.comptimePrint("{s}", .{test_options.host_runtime});
+        var rbuf: [std.c.PATH_MAX]u8 = undefined;
+        const full = std.c.realpath(built, &rbuf) orelse return error.FileNotFound;
+        try Io.Dir.cwd().symLink(std.testing.io, std.mem.sliceTo(full, 0), try std.fmt.allocPrint(a, "{s}/ztk", .{rt_dir}), .{});
+        apps.runtime_root = rt_root;
+        try apps.register(&r.it, std.testing.io, folder);
         const runner = std.mem.sliceTo(exePath(), 0);
         try host.setVars(&r.it, .{ .project = folder, .agent = agent, .shell = "/bin/sh", .path = "/usr/bin:/bin", .agent_name = "no-such-agent-program", .runner = runner, .headless = true });
         r.head = try ztk.headless.Headless.init(gpa);
@@ -333,4 +347,25 @@ test "the pane shows the image of the preview and sends the input to it" {
     try std.testing.expectEqualStrings("1", try r.eval("::dockyard::preview::call {set ::count}"));
     _ = try r.eval("::dockyard::preview::call {focus .e}; event generate .preview.box.img <KeyPress> -keysym h; event generate .preview.box.img <KeyPress> -keysym i");
     try std.testing.expectEqualStrings("hi", try r.eval("::dockyard::preview::call {.e get}"));
+}
+
+test "the Build button makes the program of this computer, and the app list shows it" {
+    var r: Run = .{ .arena = .init(std.testing.allocator) };
+    try r.start("/bin/sh", "label .l -text hi\npack .l\n");
+    defer r.stop();
+    try std.testing.expectEqualStrings("1", try r.eval("set ::dockyard::build::on([::dockyard::build::host])"));
+    _ = try r.eval("::dockyard::build::start");
+    const state = try r.eval(".bar.state cget -text");
+    try std.testing.expect(std.mem.startsWith(u8, state, "Built: "));
+    const a = r.arena.allocator();
+    const folder = std.mem.sliceTo(&r.dir, 0);
+    const name = std.fs.path.basename(folder);
+    const host_target = try r.eval("::dockyard::build::host");
+    const program = try std.fmt.allocPrint(a, "{s}/build/{s}/{s}", .{ folder, host_target, name });
+    const st = try Io.Dir.cwd().statFile(std.testing.io, program, .{});
+    try std.testing.expect(st.size > 1 << 20);
+    // The app list of the folder of the apps has the program.
+    _ = try r.eval("::dockyard::apps::show");
+    const rows = try r.eval("set ::dockyard::apps::rows");
+    try std.testing.expect(std.mem.indexOf(u8, rows, program) != null);
 }

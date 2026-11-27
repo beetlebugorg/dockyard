@@ -19,16 +19,16 @@ This page has the state of each step of the build order (section 9 of `spec.md`)
 | MCP bridge: server | dockyard | Done (dockyard PR 6): `src/mcp.zig` (`dockyard --mcp`, JSON-RPC over stdio), `src/control.zig` (the control socket of the preview child), `src/bridge.tcl` (the tools in Tcl), `src/project/CLAUDE.md` (the template), and `.mcp.json`. |
 | Current ztk | dockyard | Done: ztk fffc1cc (ztcl 821a3a7), with the photo fix of ztk PR 224 and the real clock of ztk PR 225, with `ztk bundle`, `ztk::terminal -shell` and `-command` on libghostty-vt, and `ztcl::vm` on macOS. |
 | README and user docs (issue 11) | dockyard | Done: README, `docs/guide.md`, `docs/security.md`, `docs/faq.md`, and `tools/screenshots.sh` for `docs/images/`. The live replay page of issue 11 is not started. |
-| Build button | dockyard | Not started. |
-| App list and history | dockyard | Not started. |
+| Build button | dockyard, ztk | Done: `src/apps.zig` (`dockyard::build::run` calls `ztk.bundle.run`) and the bar of `dockyard.tcl`. `zig build -Druntimes=...` puts the ztk program of each target in `zig-out/lib/ztk/runtime/TARGET/`. ztk PR 229 fixes the build for aarch64-windows. |
+| App list | dockyard | First form done: the Apps window lists the apps next to the project with their programs, with Launch and Open in dockyard. |
+| History | dockyard | Not started. |
 
 ## Next steps
 
-1. WIP: the Build button and the app list (spec sections 6 and 7). Not started. Facts from this session: `ztcl build` makes only a WebAssembly module (`--wasm`, ztcl `src/buildcmd.zig`). Static native binaries wait for ztcl issue 40, and the app bundles for ztk issues 56, 59, and 60. All four are open. Resume steps:
-   1. Add the app list: the project folders below `~/dockyard/`, each with its name, its last commit, and its `main.tcl` state. Open a project in the window from the list.
-   2. Add the Build button with the targets that exist today. Show the native targets as not available until ztcl issue 40 is merged.
-   3. Add the history pane (spec section 6): a commit after each change, and a small `ztk::snapshot` of each version.
-2. `ztk::embed` from ztk `docs/dev/embed.md`. PR 1 of that plan shares the fonts and the atlas of the parent App. `App.fonts` and `App.atlas` are values, with 40 uses in 13 files, and 3 of the files (`appkit.zig`, `windows.zig`, `d3d12.zig`) are in the macOS and Windows work (`grep -rn "app\.atlas\b\|\.atlas\.\|app\.fonts\b\|\.fonts\." src`). Agree on the change with the owners of those files first.
+1. The Claude skill (issue 16).
+2. The terminal pane in a microVM on macOS (issue 13).
+3. The sandbox monitor and the sharing panel (issue 15).
+4. The history pane (spec section 6), the live replay page (issue 11), and `ztk::embed` (ztk `docs/dev/embed.md`).
 
 ## Notes
 
@@ -44,3 +44,5 @@ This page has the state of each step of the build order (section 9 of `spec.md`)
 
 - The preview child has `file`, `channels` (for `source`), and `clock`, with the project folder as the root folder (`src/host.zig`).
 - The tests run the installed `dockyard` program as the preview child (`DOCKYARD_EXE` in `build.zig`), in a new folder `/tmp/dockyard-test-*` for each test.
+- The ztk programs of other targets come from a build on another system. A Linux program of another target has the direct and the headless backends (musl, static). A macOS program made off a Mac has only the headless backend, because the AppKit backend links the macOS SDK. A Windows program has the Win32 backend from any system.
+- `dockyard::apps::spawn` does not wait for the program, so an ended program stays a zombie process until dockyard ends.
