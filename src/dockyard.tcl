@@ -200,6 +200,16 @@ bind .preview.box.img <KeyPress> {::dockyard::preview::send key %K press -state 
 bind .preview.box.img <KeyRelease> {::dockyard::preview::send key %K release -state %s}
 
 ::dockyard::build::setup
+# The report of a crash of the last run (crash.zig), once. A headless
+# run (the tests, the screenshots) shows no dialog: it would wait.
+if {[info exists ::dockyard::crash::last] && $::dockyard::crash::last ne "" && !$::dockyard::headless} {
+    after 300 {
+        set answer [tk_messageBox -parent . -icon warning -type yesno -default yes \
+            -title "dockyard" -message "dockyard crashed last time." \
+            -detail "A report is in $::dockyard::crash::last. It stays on this computer. Open it?"]
+        if {$answer eq "yes"} {catch {::dockyard::crash::open $::dockyard::crash::last}}
+    }
+}
 ::dockyard::bridgeFiles
 ::dockyard::start
 ::dockyard::preview::begin

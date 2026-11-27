@@ -34,6 +34,10 @@ const sandbox = @import("sandbox.zig");
 const guest_release = @import("guest_release.zig");
 const monitor = @import("monitor.zig");
 const audit = @import("audit.zig");
+const crash = @import("crash.zig");
+
+/// A panic writes a crash report first (`crash.zig`).
+pub const panic = std.debug.FullPanic(crash.panic);
 const monitor_script = @embedFile("monitor.tcl");
 const audit_script = @embedFile("audit.tcl");
 
@@ -191,6 +195,7 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
     if (serve_mcp) {
+        crash.install(arena, io, init.environ_map, null);
         const sock = try host.controlPath(arena, runtime, folder);
         try mcp.main(init.gpa, io, sock);
         return;
@@ -204,6 +209,9 @@ pub fn main(init: std.process.Init) !void {
     try it.init(init.gpa);
     defer it.deinit();
     it.output = .{ .ctx = out, .write = write };
+    // The window shows the report of the last crash; the preview child
+    // and the MCP server only write reports.
+    crash.install(arena, io, init.environ_map, if (run_path == null) &it else null);
     if (run_path) |f| {
         try host.allowPreview(&it, std.fs.path.dirname(f) orelse "/");
     } else {

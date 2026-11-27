@@ -39,3 +39,7 @@ Yes: the [skill for Claude](skill.md) builds the same apps in a chat with Claude
 ## Can the app in the preview harm my computer?
 
 The preview has no `exec` and no `socket`, and it sees only the project folder. Read [security.md](security.md). The terminal pane is not a sandbox.
+
+## dockyard crashed. Where is the report?
+
+A crash of dockyard writes a report with the message, the stack, the version, and the system, and the next start offers to open it. The reports stay on your computer, the newest 20 of them: in `~/Library/Logs/dockyard` on macOS, in `$XDG_STATE_HOME/dockyard/crashes` (or `~/.local/state/dockyard/crashes`) on Linux, and in `%LOCALAPPDATA%\dockyard\crashes` on Windows. dockyard sends them nowhere. Attach one to an issue if you want to report the crash.
