@@ -11,6 +11,7 @@ The dockyard window writes one line for each event with `dockyard::monitor log` 
 | `net` | `host`, `port`, `result` (`allowed`, `blocked`, `failed`, `refused`), `up`, `down`, `ms` | `dockyard::proxy events`, every 250 ms |
 | `exec` | `pid`, `ppid`, `argv` | port 7103 of the guest helper (`docs/dev/guest.md`) |
 | `exit` | `pid` | the same |
+| `hook` | `event`, `tool`, `session`, and `prompt`, `path`, `command`, `pattern`, or `url` | the hooks of the agent program, through the helper (`docs/dev/guest.md`) |
 | `file` | `op`, `path` | the file watcher of the preview (`ztcl::watch`) |
 | `share` | `op` (`share`, `revoke`, `export`), `name` | the sharing panel |
 | `rule` | `rule` (`allow`, `block`), `host` | the rules of the monitor |
@@ -39,4 +40,4 @@ Each step is a `share` event.
 - The file events are the changes of the watcher: writes, creates, and removes. The reads of the guest are not in the log. The 9p server of ztcl (ztcl PR 385) is the place to count them.
 - A program of the guest that runs for less than 50 ms can be missing (the helper reads `/proc` every 50 ms).
 - A file is shared from the project folder only. The drop of a file from outside the project needs a path outside the file jail.
-- The hooks and the OpenTelemetry metrics of the agent program, the diff of each step, and the session replay of issue 15 are not started.
+- The hooks of the agent program go to the log. The monitor window shows them as each other kind. The OpenTelemetry metrics of the agent program, the diff of each step, and the session replay of issue 15 are not started.

@@ -12,7 +12,9 @@
 #   sandbox::signal S NUMBER    Sends a signal to the process group.
 #   sandbox::end S              Ends the session and the program.
 #   sandbox::relay VM           Sends each connection of the proxy port to dockyard::proxy.
-#   sandbox::events VM SCRIPT   Calls SCRIPT with a dict for each program that starts or ends.
+#   sandbox::events VM SCRIPT   Calls SCRIPT with a dict for each program that starts or ends,
+#                               and for each hook call of the agent program.
+#   sandbox::hooks VM HOME      Writes the hook settings of the agent program in HOME of the guest.
 
 namespace eval ::dockyard::sandbox {
     variable port_session 7100
@@ -80,6 +82,26 @@ proc ::dockyard::sandbox::Check {r what} {
     if {[dict get $r exit] != 0} {
         error "$what failed ([dict get $r exit]): [string trim [dict get $r stderr]]"
     }
+}
+
+# The events of the hooks of the agent program that go to the monitor.
+# Each hook runs `dockyard-guest hook`, which gives the events stream
+# one line of type hook (`docs/dev/guest.md`).
+namespace eval ::dockyard::sandbox {
+    variable hook_events {SessionStart UserPromptSubmit PreToolUse PostToolUse Notification Stop SubagentStop}
+}
+
+# Writes HOME/.claude/settings.json in the guest with a hook for each
+# event of hook_events. HOME is a folder of the guest, outside /work, so
+# the settings of the project stay as they are.
+proc ::dockyard::sandbox::hooks {vm home} {
+    variable hook_events
+    set cmd {[{"hooks":[{"type":"command","command":"/tmp/dockyard-guest hook"}]}]}
+    set parts {}
+    foreach e $hook_events {lappend parts "\"$e\":$cmd"}
+    set json "{\"hooks\":{[join $parts ,]}}"
+    Check [ztcl::vm exec $vm -stdin $json -- /bin/busybox sh -c \
+        "/bin/busybox mkdir -p '$home/.claude' && /bin/busybox cat > '$home/.claude/settings.json'"] "the hook settings"
 }
 
 # Starts a program on a PTY of the guest. The options:

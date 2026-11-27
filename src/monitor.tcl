@@ -9,13 +9,13 @@
 
 namespace eval ::dockyard::monitor {
     variable offset 0
-    variable shown {net 1 exec 1 exit 0 file 1 share 1 rule 1}
+    variable shown {net 1 exec 1 exit 0 hook 1 file 1 share 1 rule 1}
     variable filter ""
     variable blocked {}
     variable events {}
 }
 
-# The text of one event, and its tag: blocked, allowed, exec, file, or note.
+# The text of one event, and its tag: blocked, allowed, exec, hook, file, or note.
 proc ::dockyard::monitor::describe {e} {
     set t [clock format [expr {[dict get $e time] / 1000}] -format %H:%M:%S]
     switch -- [dict get $e kind] {
@@ -29,6 +29,18 @@ proc ::dockyard::monitor::describe {e} {
         }
         exec {return [list "$t  exec  [dict get $e pid]  [join [dict get $e argv]]" exec]}
         exit {return [list "$t  exit  [dict get $e pid]" note]}
+        hook {
+            # The event, the tool, and the first field of the tool input.
+            set what [dict get $e event]
+            if {[dict exists $e tool]} {append what " [dict get $e tool]"}
+            foreach f {path command pattern url prompt} {
+                if {[dict exists $e $f]} {
+                    append what "  [dict get $e $f]"
+                    break
+                }
+            }
+            return [list "$t  hook  $what" hook]
+        }
         file {return [list "$t  file  [dict get $e op] [dict get $e path]" file]}
         share {return [list "$t  share [dict get $e op] [dict get $e name]" note]}
         rule {return [list "$t  rule  [dict get $e rule] [dict get $e host]" note]}
@@ -63,7 +75,7 @@ proc ::dockyard::monitor::poll {} {
 proc ::dockyard::monitor::tuiShow {e} {
     if {![visible $e]} return
     lassign [describe $e] text tag
-    set color [dict get {blocked 31 allowed 32 exec 36 file 33 note 2} $tag]
+    set color [dict get {blocked 31 allowed 32 exec 36 hook 35 file 33 note 2} $tag]
     puts "\x1b\[${color}m$text\x1b\[0m"
 }
 
@@ -78,7 +90,7 @@ proc ::dockyard::monitor::gui {} {
     entry .bar.filter -textvariable ::dockyard::monitor::filter -width 30
     bind .bar.filter <KeyRelease> ::dockyard::monitor::redraw
     pack .bar.l .bar.filter -side left -padx {0 6}
-    foreach k {net exec exit file share} {
+    foreach k {net exec exit hook file share} {
         set ::dockyard::monitor::on($k) [dict get $shown $k]
         checkbutton .bar.$k -text $k -variable ::dockyard::monitor::on($k) \
             -command [list ::dockyard::monitor::toggle $k]
@@ -89,6 +101,7 @@ proc ::dockyard::monitor::gui {} {
     .log tag configure blocked -foreground #c62828
     .log tag configure allowed -foreground #2e7d32
     .log tag configure exec -foreground #00838f
+    .log tag configure hook -foreground #6a1b9a
     .log tag configure file -foreground #8d6e00
     .log tag configure note -foreground #777777
     frame .tray -padx 8 -pady 6

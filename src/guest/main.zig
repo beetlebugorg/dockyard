@@ -166,8 +166,12 @@ fn ptyFolder() void {
 
 pub fn main(init: std.process.Init.Minimal) void {
     const argv = init.args.vector;
+    if (argv.len >= 2 and std.mem.eql(u8, std.mem.sliceTo(argv[1], 0), "hook")) {
+        if (argv.len >= 3) hook_dir = std.mem.sliceTo(argv[2], 0);
+        hook();
+    }
     if (argv.len < 2 or !std.mem.eql(u8, std.mem.sliceTo(argv[1], 0), "serve")) {
-        say("usage: dockyard-guest serve ?--unix DIR? ?--tcp PORT? ?--foreground?\n");
+        say("usage: dockyard-guest serve ?--unix DIR? ?--tcp PORT? ?--hooks DIR? ?--foreground? | dockyard-guest hook ?DIR?\n");
         linux.exit_group(2);
     }
     var k: usize = 2;
@@ -178,6 +182,9 @@ pub fn main(init: std.process.Init.Minimal) void {
         } else if (k + 1 < argv.len and std.mem.eql(u8, a, "--unix")) {
             k += 1;
             unix_dir = std.mem.sliceTo(argv[k], 0);
+        } else if (k + 1 < argv.len and std.mem.eql(u8, a, "--hooks")) {
+            k += 1;
+            hook_dir = std.mem.sliceTo(argv[k], 0);
         } else if (k + 1 < argv.len and std.mem.eql(u8, a, "--tcp")) {
             k += 1;
             tcp_port = std.fmt.parseInt(u16, std.mem.sliceTo(argv[k], 0), 10) catch 3128;
@@ -562,6 +569,7 @@ fn events(c: i32) void {
             v.alive = false;
         };
         if (!scan(c, first)) return;
+        if (!sendHooks(c)) return;
         first = false;
         for (&seen) |*s| if (s.*) |v| if (!v.alive) {
             var line: [128]u8 = undefined;
@@ -699,4 +707,108 @@ fn jsonString(out: []u8, at: usize, s: []const u8) ?usize {
     }
     out[w] = '"';
     return w + 1;
+}
+
+// ---- Hooks of the agent program ----
+
+/// The folder where `dockyard-guest hook` puts one file for each hook
+/// call. The events stream reads the files there.
+/// `serve --hooks DIR` and `hook DIR` change it, for the tests on the host.
+var hook_dir: [:0]const u8 = "/tmp/dockyard-hooks";
+var hook_in: [256 * 1024]u8 = undefined;
+var hook_heap: [2 * 1024 * 1024]u8 = undefined;
+var hook_line: [16 * 1024]u8 = undefined;
+
+/// `dockyard-guest hook`: the command of each hook of the agent program.
+/// It reads the JSON of the hook on stdin, keeps the event, the tool,
+/// the session, and the main argument of the tool, and writes them as
+/// one flat JSON line to a new file in `hook_dir`. A temporary name and
+/// a rename make each file whole before the events stream sees it. The
+/// exit code is 0 in each case, so a hook never stops the agent program.
+fn hook() noreturn {
+    var n: usize = 0;
+    while (n < hook_in.len) {
+        const r = ok(linux.read(0, hook_in[n..].ptr, hook_in.len - n)) orelse break;
+        if (r == 0) break;
+        n += r;
+    }
+    var fba = std.heap.FixedBufferAllocator.init(&hook_heap);
+    const v = std.json.parseFromSliceLeaky(std.json.Value, fba.allocator(), hook_in[0..n], .{}) catch linux.exit_group(0);
+    if (v != .object) linux.exit_group(0);
+    const tool_input = if (v.object.get("tool_input")) |t| (if (t == .object) t.object else null) else null;
+    var w = (std.fmt.bufPrint(&hook_line, "{{\"type\":\"hook\",\"time\":{d}", .{nowMs()}) catch linux.exit_group(0)).len;
+    const fields = [_]struct { key: []const u8, from: []const u8, in_tool: bool }{
+        .{ .key = "event", .from = "hook_event_name", .in_tool = false },
+        .{ .key = "tool", .from = "tool_name", .in_tool = false },
+        .{ .key = "session", .from = "session_id", .in_tool = false },
+        .{ .key = "prompt", .from = "prompt", .in_tool = false },
+        .{ .key = "path", .from = "file_path", .in_tool = true },
+        .{ .key = "command", .from = "command", .in_tool = true },
+        .{ .key = "pattern", .from = "pattern", .in_tool = true },
+        .{ .key = "url", .from = "url", .in_tool = true },
+    };
+    for (fields) |f| {
+        const obj = if (f.in_tool) tool_input orelse continue else v.object;
+        const val = obj.get(f.from) orelse continue;
+        if (val != .string) continue;
+        w = putField(w, f.key, trimUtf8(val.string, 500)) orelse linux.exit_group(0);
+    }
+    if (w + 2 > hook_line.len) linux.exit_group(0);
+    @memcpy(hook_line[w..][0..2], "}\n");
+    w += 2;
+    _ = linux.mkdir(hook_dir, 0o700);
+    var tmp: [512]u8 = undefined;
+    var name: [512]u8 = undefined;
+    const pid = linux.getpid();
+    const tz = std.fmt.bufPrintSentinel(&tmp, "{s}/.{d}", .{ hook_dir, pid }, 0) catch linux.exit_group(0);
+    const nz = std.fmt.bufPrintSentinel(&name, "{s}/{d:0>13}-{d}", .{ hook_dir, nowMs(), pid }, 0) catch linux.exit_group(0);
+    const fd: i32 = @intCast(ok(linux.open(tz, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true, .CLOEXEC = true }, 0o600)) orelse linux.exit_group(0));
+    const good = writeAll(fd, hook_line[0..w]);
+    _ = linux.close(fd);
+    if (good) _ = linux.rename(tz, nz) else _ = linux.unlink(tz);
+    linux.exit_group(0);
+}
+
+fn putField(at: usize, key: []const u8, val: []const u8) ?usize {
+    var w = at;
+    if (w + key.len + 4 > hook_line.len) return null;
+    hook_line[w] = ',';
+    hook_line[w + 1] = '"';
+    @memcpy(hook_line[w + 2 ..][0..key.len], key);
+    w += 2 + key.len;
+    @memcpy(hook_line[w..][0..2], "\":");
+    w += 2;
+    return jsonString(&hook_line, w, val);
+}
+
+/// The first `max` bytes of `s`, cut at the start of a UTF-8 sequence.
+fn trimUtf8(s: []const u8, max: usize) []const u8 {
+    if (s.len <= max) return s;
+    var n = max;
+    while (n > 0 and s[n] & 0xc0 == 0x80) n -= 1;
+    return s[0..n];
+}
+
+/// Sends the line of each file in `hook_dir` on the events stream, then
+/// removes the file. False when the host closed the stream.
+fn sendHooks(c: i32) bool {
+    const d: i32 = @intCast(ok(linux.open(hook_dir, .{ .ACCMODE = .RDONLY, .DIRECTORY = true, .CLOEXEC = true }, 0)) orelse return true);
+    defer _ = linux.close(d);
+    var ents: [4096]u8 align(8) = undefined;
+    while (true) {
+        const n = ok(linux.getdents64(d, &ents, ents.len)) orelse return true;
+        if (n == 0) return true;
+        var off: usize = 0;
+        while (off < n) {
+            const ent: *align(1) linux.dirent64 = @ptrCast(&ents[off]);
+            off += ent.reclen;
+            const name: [*:0]const u8 = @ptrCast(&ent.name);
+            if (name[0] == '.') continue;
+            const fd: i32 = @intCast(ok(linux.openat(d, name, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0)) orelse continue);
+            const r = ok(linux.read(fd, &hook_line, hook_line.len)) orelse 0;
+            _ = linux.close(fd);
+            _ = linux.unlinkat(d, name, 0);
+            if (r > 0 and !writeAll(c, hook_line[0..r])) return false;
+        }
+    }
 }

@@ -125,7 +125,8 @@ test "the monitor log keeps the events and the rules outside the project" {
     _ = try it.eval(@embedFile("monitor.tcl"));
     const r = try it.eval(
         \\lassign [dockyard::monitor read 0] next lines
-        \\list [llength $lines] [lindex [::dockyard::monitor::describe [lindex $lines 0]] 1] [string match "*exec  7  /bin/busybox ls -l" [lindex [::dockyard::monitor::describe [lindex $lines 1]] 0]] [expr {$next > 0}]
+        \\list [llength $lines] [lindex [::dockyard::monitor::describe [lindex $lines 0]] 1] [string match "*exec  7  /bin/busybox ls -l" [lindex [::dockyard::monitor::describe [lindex $lines 1]] 0]] [expr {$next > 0}] \
+        \\    [string match "*  hook  PostToolUse Edit  /work/a.tcl" [lindex [::dockyard::monitor::describe {kind hook time 0 event PostToolUse tool Edit path /work/a.tcl}] 0]]
     );
-    try std.testing.expectEqualStrings("2 blocked 1 1", try it.str(r));
+    try std.testing.expectEqualStrings("2 blocked 1 1 1", try it.str(r));
 }
