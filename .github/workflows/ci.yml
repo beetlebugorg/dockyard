@@ -47,6 +47,21 @@ jobs:
           ulimit -v 6000000
           zig build install test
 
+  # Windows: the program and the tests, with cmd.exe as the shell of the
+  # terminal pane through ConPTY. It runs in the scheduled run and on a
+  # dispatch, so it does not gate a pull request.
+  test-windows:
+    name: Test (Windows)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Build and test
+        run: zig build install test
+
   skill:
     name: Skill (Linux)
     runs-on: ubuntu-latest
@@ -76,7 +91,7 @@ jobs:
   report:
     name: Report a failure of the full run
     if: failure() && github.event_name == 'schedule'
-    needs: [test, skill]
+    needs: [test, test-windows, skill]
     runs-on: ubuntu-latest
     permissions:
       issues: write

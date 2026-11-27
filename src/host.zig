@@ -216,6 +216,13 @@ pub fn environment(a: std.mem.Allocator, map: *const std.process.Environ.Map) ![
     return out.items;
 }
 
+/// The shell of the terminal pane: `SHELL`, or `/bin/sh`. On Windows
+/// `COMSPEC`, or the cmd.exe of the system folder.
+pub fn shellOf(map: *const std.process.Environ.Map) []const u8 {
+    if (comptime on_win) return map.get("COMSPEC") orelse "C:\\Windows\\System32\\cmd.exe";
+    return map.get("SHELL") orelse "/bin/sh";
+}
+
 /// Sets the variables of `dockyard.tcl`.
 pub fn setVars(it: *ztcl.Interp, s: Setup) !void {
     try it.setVar("::dockyard::project", .{ .str = s.project });
@@ -226,6 +233,7 @@ pub fn setVars(it: *ztcl.Interp, s: Setup) !void {
     try it.setVar("::dockyard::runner", .{ .str = s.runner });
     try it.setVar("::dockyard::headless", .{ .str = if (s.headless) "1" else "0" });
     try it.setVar("::dockyard::dark", .{ .str = if (s.dark) "1" else "0" });
+    try it.setVar("::dockyard::windows", .{ .str = if (on_win) "1" else "0" });
     try it.setVar("::dockyard::claude_md", .{ .str = claude_md });
 }
 

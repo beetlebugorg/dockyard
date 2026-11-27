@@ -54,6 +54,16 @@ proc ::dockyard::start {} {
     variable shell
     if {$agent ne ""} {
         set cmd [list $agent]
+        # npm puts a program on Windows as a batch file, which only the
+        # shell runs.
+        if {[string match -nocase *.cmd $agent]} {set cmd [list $shell /c $agent]}
+    } elseif {$::dockyard::windows} {
+        # The console of Windows clears the pane when the shell starts,
+        # so the shell writes the advice.
+        set lines [list "$agent_name is not on the PATH. This pane runs $shell." \
+            "Install it with: npm install -g @anthropic-ai/claude-code" \
+            "Then type exit to start it."]
+        set cmd [list $shell /k [join [lmap l $lines {string cat "echo " $l}] " & "]]
     } else {
         .term write "\x1b\[1m$agent_name\x1b\[0m is not on the PATH. This pane runs $shell.\r\n"
         .term write "Install it with: npm install -g @anthropic-ai/claude-code\r\n"
