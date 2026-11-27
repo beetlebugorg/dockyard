@@ -87,7 +87,7 @@ The bar has a check button for each target of `ztk bundle`: `x86_64-linux`, `aar
 
 Click Build. For each selected target, dockyard copies the ztk program of the target and puts the app in it (`ztk bundle`). The output is one program file, `build/TARGET/NAME` in the project, with `.exe` for Windows. `NAME` is the name of the project folder. The bar shows the result. An error shows in the output pane below the preview.
 
-`icon.png` of the project, a square PNG of 1,024 pixels or less, goes to `ztk bundle --icon`. The ztk of this dockyard uses it only for a macOS app folder. The icon resource of a Windows program and the `.desktop` file of a Linux program come with the next update of ztk in dockyard. The app is `main.tcl` and the other files and folders of the project. The program leaves out the hidden files, `build/`, `CLAUDE.md`, and `LICENSE`. The program gets the capabilities of the preview: `file`, `channels`, and `clock`.
+`icon.png` of the project, a square PNG, is the icon of the program: the icon resource of a Windows program, and `NAME.desktop` with `NAME.png` next to a Linux program. A Windows program takes a PNG of 256 pixels or less, or `icon.ico` of the project when it has one. The app is `main.tcl` and the other files and folders of the project. The program leaves out the hidden files, `build/`, `CLAUDE.md`, and `LICENSE`. The program gets the capabilities of the preview: `file`, `channels`, and `clock`.
 
 The ztk programs of the targets are in `lib/ztk/runtime/TARGET/` next to the `bin` folder of dockyard. `zig build` makes the program of the target of the build. `zig build -Druntimes=all` makes the programs of all the targets, and `-Druntimes=x86_64-linux,x86_64-windows` makes a list of them.
 

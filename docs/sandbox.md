@@ -7,7 +7,7 @@ dockyard --sandbox ~/dockyard/guest ~/dockyard/my-app
 ```
 
 > [!NOTE]
-> The sandbox is a first form. It runs on x86-64 Linux with KVM. macOS and Windows are not checked yet. The ztcl of this dockyard has no folder share on KVM yet (ztcl pull request 385), so the guest starts without the project folder and the pane says so. The guest has BusyBox only, so the pane runs a BusyBox shell (`/bin/busybox sh -l`) by default. Claude Code needs node, which comes with the tools disk of the guest: that disk waits for the signed images of ztcl. `--sandbox-command LIST` runs another program of the guest.
+> The sandbox is a first form. It runs on x86-64 Linux with KVM. macOS and Windows are not checked yet. The guest has BusyBox only, so the pane runs a BusyBox shell (`/bin/busybox sh -l`) by default. Claude Code needs node, which comes with the tools disk of the guest: that disk waits for the signed images of ztcl. `--sandbox-command LIST` runs another program of the guest.
 
 ## What it needs
 
