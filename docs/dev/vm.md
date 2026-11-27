@@ -58,3 +58,14 @@ A guest program can reach: the project folder (virtio-fs, read-write), the files
 
 1. One VM for each project, or one VM for all the projects? Default: one for each project, so a project sees only its own folder.
 2. The proxy sees only the host names of HTTPS connections (CONNECT). The bodies of the requests need a local CA that the guest trusts. Default: off, as issue 15 says.
+
+## The tools disk (plan, 2026-11-27)
+
+The guest of ztcl has BusyBox and the agent of ztcl only. The program of the pane needs node (or a static build of the agent program), git, and the helper of dockyard. These go on a second read-only disk, in the image format of ztcl `docs/dev/vm-image.md`:
+
+- The disk: a squashfs of `/tools` (`bin/node`, `bin/git`, `bin/dockyard-guest`, `lib/node_modules/...`), padded to 4 KiB blocks, with the `dm-verity` hash tree after the data, as `image.sh` of ztcl makes the root disk. node and git are static musl builds, made in the CI job from release archives and checked by their SHA-256; nobody reads their source.
+- The manifest: the kernel and the root disk of the ztcl guest release (by SHA-256), and the tools disk as `disks[1]` with its `verity` fields. The command line maps it as `dm-1` and the helper mounts it at `/tools`. A manifest per architecture pair, with a `counter` that grows.
+- The signature: a key of dockyard. `ztcl::vm` trusts only the keys of ztcl today, so dockyard needs an embedder key list in `Interp.vm_host` (a question for ztcl). Until then a dockyard build signs with ztcl's test key under a `-test` name, in Debug only.
+- The CI job (`.github/workflows/guest.yml`): build the disk on x86_64 and arm64 runners, write the manifest, sign it in a protected environment, and attach the files to a release `guest-vN`. Size goal: under 60 MB compressed for each architecture.
+- In the app: `ztcl::vm image install` of the release into the store, `create -image dockyard-guest`, and the update panel of issue 13 (current and new versions, Update, Roll back).
+- The helper then comes from `/tools/bin`, and the copy over `exec` goes away.
