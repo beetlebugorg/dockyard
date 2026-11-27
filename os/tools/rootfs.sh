@@ -12,21 +12,39 @@ cp /etc/apk/repositories /rootfs/etc/apk/
 # The packages of the pane: a shell, node and npm for the agent program,
 # git, and the certificates for HTTPS through the proxy. git-lfs is not
 # here: its install script writes the lines of /etc/gitconfig in a
-# different order in each build.
+# different order in each build. openssh-client is not here: the guest
+# reaches the network only through the HTTP proxy, so git uses HTTPS.
 apk add -q --root /rootfs --initdb --no-cache \
     alpine-baselayout busybox busybox-binsh musl ca-certificates \
-    nodejs npm git openssh-client
+    nodejs npm git
+# git over HTTPS needs git-remote-http only. These programs are for other
+# transports and for servers.
+for f in git-http-fetch git-http-push git-imap-send git-daemon git-shell \
+    git-http-backend git-sh-i18n--envsubst; do
+    rm -f /rootfs/usr/libexec/git-core/$f /rootfs/usr/bin/$f
+done
 apk info --root /rootfs -v | sort > /out/packages.txt
 echo "$zig_sha  /in/zig.tar.xz" | sha256sum -c -s
 mkdir -p /rootfs/opt/zig
 tar -xJf /in/zig.tar.xz -C /rootfs/opt/zig --strip-components=1
+# The pane builds and tests for Linux only. The Build of the app makes the
+# binaries for the other platforms on the host, so the headers and the
+# libc sources of the other systems are not on the disk.
+(cd /rootfs/opt/zig && rm -rf doc \
+    lib/libc/include/*-windows* lib/libc/include/*-darwin* \
+    lib/libc/include/*-freebsd* lib/libc/include/*-netbsd* lib/libc/include/*-openbsd* \
+    lib/libc/mingw lib/libc/darwin lib/libc/freebsd lib/libc/netbsd lib/libc/openbsd)
 ln -sf /opt/zig/zig /rootfs/usr/bin/zig
 mkdir -p /rootfs/usr/libexec/dockyard /rootfs/work /rootfs/inbox
 install -m 755 /in/dockyard-guest /rootfs/usr/libexec/dockyard/dockyard-guest
 # The log of apk has the time of the build.
-rm -rf /rootfs/var/cache/apk/* /rootfs/lib/apk/db/scripts.tar* /rootfs/var/log/apk.log
+rm -rf /rootfs/var/cache/apk/* /rootfs/lib/apk/db/scripts.tar* /rootfs/var/log/apk.log \
+    /rootfs/usr/share/man /rootfs/usr/share/doc
 rm -f /out/tools.img
-mksquashfs /rootfs /out/tools.img -noappend -all-root -no-xattrs -comp xz \
+# Blocks of 1 MiB and the branch filter of the architecture make the disk
+# about 12% smaller than blocks of 128 KiB without a filter.
+case $arch in x86_64) bcj=x86 ;; arm64) bcj=arm64 ;; esac
+mksquashfs /rootfs /out/tools.img -noappend -all-root -no-xattrs -comp xz -b 1M -Xbcj $bcj \
     -mkfs-time 0 -all-time 0 -reproducible -quiet -no-progress
 # The data fills whole blocks of 4,096 bytes, and the tree starts after it.
 size=$(stat -c %s /out/tools.img)
