@@ -113,6 +113,9 @@ var tcp_port: u16 = 3128;
 /// The relay port of the host. On KVM the vsock ports of the host are
 /// one space for each host, so each guest of a host gets its own port.
 var relay_port: u32 = port_relay;
+/// `serve --framed`: the relay speaks the framed relay of ztcl
+/// (`ztcl::vm listen -framed 1`) to the host.
+var relay_framed = false;
 var foreground = false;
 var self_pid: i32 = 0;
 
@@ -212,6 +215,8 @@ pub fn main(init: std.process.Init.Minimal) void {
         } else if (k + 1 < argv.len and std.mem.eql(u8, a, "--hooks")) {
             k += 1;
             hook_dir = std.mem.sliceTo(argv[k], 0);
+        } else if (std.mem.eql(u8, a, "--framed")) {
+            relay_framed = true;
         } else if (k + 1 < argv.len and std.mem.eql(u8, a, "--relay")) {
             k += 1;
             relay_port = std.fmt.parseInt(u32, std.mem.sliceTo(argv[k], 0), 10) catch port_relay;
@@ -294,7 +299,59 @@ fn inChild(c: i32, fds: []linux.pollfd, comptime run: fn (i32) void) void {
 /// client closes.
 fn relay(c: i32) void {
     const h = connectHost(relay_port) orelse return;
-    splice(c, h);
+    if (relay_framed) spliceFramed(c, h) else splice(c, h);
+}
+
+/// The framed relay of ztcl (docs/dev/vm-agent.md of ztcl): the preamble
+/// `ZTRELAY1`, then in each direction frames of a kind byte (0 data, 1
+/// end), a length (u32, little endian, at most 65,536), and the data.
+/// The end of the client `a` is an end frame to the host `b`, and an end
+/// frame of the host is a shutdown of the writes to the client. The copy
+/// ends when both directions end, or when the host closes.
+fn spliceFramed(a: i32, b: i32) void {
+    const max = 65536;
+    if (!writeAll(b, "ZTRELAY1")) return;
+    var out: [5 + max]u8 = undefined;
+    var in: [2 * (5 + max)]u8 = undefined;
+    var have: usize = 0;
+    var open_a = true;
+    var host_done = false;
+    while (open_a or !host_done) {
+        var pf = [2]linux.pollfd{
+            .{ .fd = if (open_a) a else -1, .events = linux.POLL.IN, .revents = 0 },
+            .{ .fd = b, .events = linux.POLL.IN, .revents = 0 },
+        };
+        _ = ok(linux.poll(&pf, 2, -1)) orelse return;
+        if (pf[0].revents != 0) {
+            const n = ok(linux.read(a, out[5..].ptr, max)) orelse 0;
+            out[0] = if (n == 0) 1 else 0;
+            std.mem.writeInt(u32, out[1..5], @intCast(n), .little);
+            if (!writeAll(b, out[0 .. 5 + n])) return;
+            if (n == 0) open_a = false;
+        }
+        if (pf[1].revents != 0) {
+            const n = ok(linux.read(b, in[have..].ptr, in.len - have)) orelse 0;
+            if (n == 0) return;
+            have += n;
+            var at: usize = 0;
+            while (have - at >= 5) {
+                const len = std.mem.readInt(u32, in[at + 1 ..][0..4], .little);
+                if (len > max) return;
+                if (have - at < 5 + len) break;
+                switch (in[at]) {
+                    0 => if (!host_done and !writeAll(a, in[at + 5 .. at + 5 + len])) return,
+                    1 => {
+                        host_done = true;
+                        _ = linux.shutdown(a, linux.SHUT.WR);
+                    },
+                    else => return,
+                }
+                at += 5 + len;
+            }
+            std.mem.copyForwards(u8, in[0 .. have - at], in[at..have]);
+            have -= at;
+        }
+    }
 }
 
 /// Copies the bytes both ways between the client `a` and the host `b`.
@@ -302,7 +359,8 @@ fn relay(c: i32) void {
 /// close. The end of `a` stops the reads of `a` only: the answer of the
 /// host still goes to the client. The relay sends no half close to the
 /// host, since the vsock of VZ drops a half close while the host has
-/// unread data. ztcl #512 adds frames for the end of a stream.
+/// unread data. The sandbox uses `spliceFramed` (`serve --framed`); this
+/// copy is for a host with no framed relay, as in the host test.
 fn splice(a: i32, b: i32) void {
     var buf: [65536]u8 = undefined;
     var open_a = true;
@@ -678,7 +736,7 @@ fn jsonString(out: []u8, at: usize, s: []const u8) ?usize {
 var hook_dir: [:0]const u8 = "/tmp/dockyard-hooks";
 var hook_in: [256 * 1024]u8 = undefined;
 var hook_heap: [256 * 1024]u8 = undefined;
-var hook_line: [16 * 1024]u8 = undefined;
+var hook_line: [64 * 1024]u8 = undefined;
 
 /// `dockyard-guest hook`: the command of each hook of the agent program.
 /// It reads the JSON of the hook on stdin, keeps the event, the tool,
@@ -695,10 +753,10 @@ fn hook() noreturn {
     }
     var vals: [hook_fields.len]?[]const u8 = @splat(null);
     var p: Json = .{ .s = hook_in[0..n] };
-    if (!p.object(&vals, false)) linux.exit_group(0);
+    if (!p.object(&vals, .top)) linux.exit_group(0);
     var w = (std.fmt.bufPrint(&hook_line, "{{\"type\":\"hook\",\"time\":{d}", .{nowMs()}) catch linux.exit_group(0)).len;
     for (hook_fields, vals) |f, val| {
-        w = putField(w, f.key, trimUtf8(val orelse continue, 500)) orelse linux.exit_group(0);
+        w = putField(w, f.key, trimUtf8(val orelse continue, f.max)) orelse linux.exit_group(0);
     }
     if (w + 2 > hook_line.len) linux.exit_group(0);
     @memcpy(hook_line[w..][0..2], "}\n");
@@ -719,15 +777,27 @@ fn hook() noreturn {
 /// The fields of a hook that go on the events stream: the key on the
 /// stream, the key in the JSON of the hook, and true for a key of
 /// `tool_input`.
-const hook_fields = [_]struct { key: []const u8, from: []const u8, in_tool: bool }{
-    .{ .key = "event", .from = "hook_event_name", .in_tool = false },
-    .{ .key = "tool", .from = "tool_name", .in_tool = false },
-    .{ .key = "session", .from = "session_id", .in_tool = false },
-    .{ .key = "prompt", .from = "prompt", .in_tool = false },
-    .{ .key = "path", .from = "file_path", .in_tool = true },
-    .{ .key = "command", .from = "command", .in_tool = true },
-    .{ .key = "pattern", .from = "pattern", .in_tool = true },
-    .{ .key = "url", .from = "url", .in_tool = true },
+/// The part of the JSON of a hook that a field comes from: the top
+/// object, `tool_input`, or `tool_response`.
+const Scope = enum(u8) { top, input, response };
+
+/// The fields of a hook that go to the events stream, each cut at
+/// `max` bytes.
+const hook_fields = [_]struct { key: []const u8, from: []const u8, scope: Scope, max: usize = 500 }{
+    .{ .key = "event", .from = "hook_event_name", .scope = .top },
+    .{ .key = "tool", .from = "tool_name", .scope = .top },
+    .{ .key = "session", .from = "session_id", .scope = .top },
+    .{ .key = "call", .from = "tool_use_id", .scope = .top },
+    .{ .key = "prompt", .from = "prompt", .scope = .top, .max = 2000 },
+    .{ .key = "path", .from = "file_path", .scope = .input },
+    .{ .key = "command", .from = "command", .scope = .input, .max = 2000 },
+    .{ .key = "pattern", .from = "pattern", .scope = .input },
+    .{ .key = "url", .from = "url", .scope = .input },
+    .{ .key = "old", .from = "old_string", .scope = .input, .max = 2000 },
+    .{ .key = "new", .from = "new_string", .scope = .input, .max = 2000 },
+    .{ .key = "content", .from = "content", .scope = .input, .max = 2000 },
+    .{ .key = "stdout", .from = "stdout", .scope = .response, .max = 2000 },
+    .{ .key = "stderr", .from = "stderr", .scope = .response, .max = 2000 },
 };
 
 /// A small reader of the JSON of a hook. It finds the string values of
@@ -752,8 +822,8 @@ const Json = struct {
         return false;
     }
 
-    /// Reads an object. `in_tool` is true for `tool_input`.
-    fn object(p: *Json, vals: []?[]const u8, in_tool: bool) bool {
+    /// Reads an object of the part `scope` of the hook.
+    fn object(p: *Json, vals: []?[]const u8, scope: Scope) bool {
         if (!p.eat('{')) return false;
         if (p.eat('}')) return true;
         while (true) {
@@ -763,12 +833,14 @@ const Json = struct {
             p.ws();
             const is_string = p.i < p.s.len and p.s[p.i] == '"';
             const want = for (hook_fields, 0..) |f, k| {
-                if (f.in_tool == in_tool and std.mem.eql(u8, f.from, key)) break k;
+                if (f.scope == scope and std.mem.eql(u8, f.from, key)) break k;
             } else null;
             if (want != null and is_string) {
                 vals[want.?] = p.string() orelse return false;
-            } else if (!in_tool and std.mem.eql(u8, key, "tool_input") and p.i < p.s.len and p.s[p.i] == '{') {
-                if (!p.object(vals, true)) return false;
+            } else if (scope == .top and p.i < p.s.len and p.s[p.i] == '{' and
+                (std.mem.eql(u8, key, "tool_input") or std.mem.eql(u8, key, "tool_response")))
+            {
+                if (!p.object(vals, if (key[5] == 'i') .input else .response)) return false;
             } else if (!p.skip()) return false;
             if (p.eat('}')) return true;
             if (!p.eat(',')) return false;

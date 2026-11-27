@@ -38,10 +38,10 @@ A reader checks the chain: the SHA-256 of line N is `prev` of line N+1. The last
 |---|---|---|
 | `session` | `op` (`start`, `end`), `sandbox` (true or false), `argv`, `project`, `exit` (with `end`) | the dockyard window |
 | `turn` | `op` (`start`, `end`), `prompt` (the first 2,000 bytes), `agent_session` (the `session_id` of the hook) | the hooks `UserPromptSubmit` and `Stop` |
-| `tool` | `op` (`start`, `end`), `tool`, `input` (the tool input, each string cut at 2,000 bytes), `ok` (with `end`) | the hooks `PreToolUse` and `PostToolUse` |
+| `tool` | `op` (`start`, `end`), `tool`, `input` (the fields `path`, `command`, `pattern`, `url`, `old`, `new`, and `content` of the tool input, each string cut at 2,000 bytes), `ok` (with `end`), `stdout` and `stderr` (with `end`, from the tool response, the first 2,000 bytes) | the hooks `PreToolUse` and `PostToolUse`, with `call` the `tool_use_id` of the hook |
 | `exec` | `pid`, `ppid`, `argv`, `cwd` | the helper (port 7103), or the host for a session without the sandbox |
 | `exit` | `pid`, `code` (the exit code, or minus the signal), `ms`, `output` (see below) | the same |
-| `file` | `op` (`read`, `write`, `create`, `remove`, `rename`), `path`, `before` and `after` (SHA-256 hex of the content, or null), `diff` (see below) | the file watcher of `/work`, and the `Read`, `Write`, and `Edit` tools of the hooks |
+| `file` | `op` (`read`, `write`, `create`, `remove`, `rename`), `path`, `before` and `after` (SHA-256 hex of the content, or null), `diff` (see below), and from an `Edit` or `Write` hook `old`, `new`, or `content` (the first 2,000 bytes) | the file watcher of `/work`, and the `Read`, `Write`, and `Edit` tools of the hooks |
 | `net` | `host`, `port`, `result` (`allowed`, `blocked`, `failed`, `refused`), `rule` (the rule that decided), `up`, `down`, `ms` | the proxy, and the netlog of `-net nat` |
 | `dns` | `name`, `type`, `result` (`allowed`, `blocked`), `rule`, `answers` | the DNS relay of `-net nat` (netlog of ztcl) |
 | `blocked` | `what` (`net`, `dns`, `file`, `exec`), `target`, `rule` | each source that refuses an action. The `net` or `dns` record has the same `call` |

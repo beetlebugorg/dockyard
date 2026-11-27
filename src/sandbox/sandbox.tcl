@@ -75,7 +75,7 @@ variable ::dockyard::sandbox::tools_mount {
     $b mount -t tmpfs -o mode=700 tmpfs "$1/root"
     $b mount -t tmpfs -o mode=755 tmpfs "$1/inbox"
     if [ -n "$2" ]; then $b mount -o bind /mnt/share "$1$2"; fi
-    $b chroot "$1" /usr/libexec/dockyard/dockyard-guest serve --relay "$3"
+    $b chroot "$1" /usr/libexec/dockyard/dockyard-guest serve --framed --relay "$3"
 }
 
 # Starts a guest and the helper in it. The options:
@@ -115,7 +115,7 @@ proc ::dockyard::sandbox::boot {args} {
             set roots($vm) [list $tools_root /usr/libexec/dockyard/dockyard-guest]
         } else {
             Copy $vm [dict get $o -helper] [lindex $share 1]
-            Check [ztcl::vm exec $vm -- /tmp/dockyard-guest serve --relay $port] "the start of the helper"
+            Check [ztcl::vm exec $vm -- /tmp/dockyard-guest serve --framed --relay $port] "the start of the helper"
             set roots($vm) [list {} /tmp/dockyard-guest]
         }
     } msg opts]} {
@@ -311,7 +311,7 @@ proc ::dockyard::sandbox::Relay {vm ch} {
 proc ::dockyard::sandbox::Listen {vm} {
     variable port_relay
     for {set p $port_relay} {$p < $port_relay + 64} {incr p} {
-        if {![catch {ztcl::vm listen $vm $p -command [list ::dockyard::sandbox::Relay $vm]} msg opts]} {return $p}
+        if {![catch {ztcl::vm listen $vm $p -framed 1 -command [list ::dockyard::sandbox::Relay $vm]} msg opts]} {return $p}
         if {[lindex [dict get $opts -errorcode] 2] ne "LISTEN"} {return -options $opts $msg}
     }
     error "no free relay port from $port_relay"

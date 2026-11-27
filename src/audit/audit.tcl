@@ -68,7 +68,7 @@ proc ::dockyard::audit::hook {d opts} {
     variable turns
     set ev [dict get $d event]
     set input {}
-    foreach f {path command pattern url} {
+    foreach f {path command pattern url old new content} {
         if {[dict exists $d $f]} {dict set input $f [dict get $d $f]}
     }
     set more {}
@@ -86,7 +86,22 @@ proc ::dockyard::audit::hook {d opts} {
             catch {::dockyard::audit context -turn ""}
         }
         PreToolUse {Log tool [list op start tool $tool input $input] -source hook {*}$opts}
-        PostToolUse {Log tool [list op end tool $tool input $input] -source hook {*}$opts}
+        PostToolUse {
+            set out {}
+            foreach f {stdout stderr} {
+                if {[dict exists $d $f]} {lappend out $f [dict get $d $f]}
+            }
+            Log tool [list op end tool $tool input $input {*}$out] -source hook {*}$opts
+            # A change of a file by a tool: the path and the old and new
+            # text that the tool gives (the first 2,000 bytes of each).
+            if {$tool in {Edit Write MultiEdit} && [dict exists $input path]} {
+                set f [list op write path [dict get $input path] before {} after {}]
+                foreach k {old new content} {
+                    if {[dict exists $input $k]} {lappend f $k [dict get $input $k]}
+                }
+                Log file $f -source hook {*}$opts
+            }
+        }
         default {Log note [list text "hook $ev" tool $tool {*}$more] -source hook {*}$opts}
     }
 }
