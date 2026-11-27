@@ -133,8 +133,12 @@ pub fn main(init: std.process.Init) !void {
     }
 
     // The project folder as a full path.
-    // The shell gives the current folder in PWD.
-    const cwd = init.environ_map.get("PWD") orelse "/";
+    // The shell gives the current folder in PWD. Windows has no PWD, or
+    // the POSIX form of a Git shell, so it asks the system.
+    const cwd = if (comptime @import("builtin").os.tag == .windows)
+        try std.process.currentPathAlloc(io, arena)
+    else
+        init.environ_map.get("PWD") orelse "/";
     const folder = if (project) |p| try std.fs.path.resolve(arena, &.{ cwd, p }) else cwd;
     const runtime = init.environ_map.get("XDG_RUNTIME_DIR");
     if (serve_mcp) {

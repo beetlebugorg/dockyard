@@ -13,6 +13,11 @@ const test_options = @import("test_options");
 const mcp = @import("mcp.zig");
 const apps = @import("apps.zig");
 
+/// The window tests run `/bin/sh` as the agent program, with the
+/// folders and the processes of POSIX, so they skip on Windows until the
+/// port of the window (dockyard#23).
+const on_win = @import("builtin").os.tag == .windows;
+
 /// The path of the dockyard program: `DOCKYARD_EXE`, or the program of
 /// the build. The path of the build can be relative to the build root,
 /// the folder of the test run, so `realpath` makes it a full path.
@@ -30,6 +35,7 @@ test {
     _ = @import("mcp.zig");
     _ = @import("apps.zig");
     _ = @import("proxy.zig");
+    _ = @import("sock.zig");
 }
 
 const window_script = @embedFile("dockyard.tcl");
@@ -158,6 +164,7 @@ fn removeFolder(a: std.mem.Allocator, folder: []const u8) void {
 }
 
 test "the terminal pane runs the agent program in the project folder" {
+    if (comptime on_win) return error.SkipZigTest;
     var r: Run = .{ .arena = .init(std.testing.allocator) };
     try r.start("/bin/sh", null);
     defer r.stop();
@@ -173,6 +180,7 @@ test "the terminal pane runs the agent program in the project folder" {
 }
 
 test "a missing agent program gives a shell and the install advice" {
+    if (comptime on_win) return error.SkipZigTest;
     var r: Run = .{ .arena = .init(std.testing.allocator) };
     try r.start(null, null);
     defer r.stop();
@@ -183,6 +191,7 @@ test "a missing agent program gives a shell and the install advice" {
 }
 
 test "the preview runs main.tcl and starts it again after a change" {
+    if (comptime on_win) return error.SkipZigTest;
     var r: Run = .{ .arena = .init(std.testing.allocator) };
     try r.start("/bin/sh", "puts preview-[expr {20 + 1}]\n");
     defer r.stop();
@@ -194,6 +203,7 @@ test "the preview runs main.tcl and starts it again after a change" {
 }
 
 test "the preview shows an error of main.tcl" {
+    if (comptime on_win) return error.SkipZigTest;
     var r: Run = .{ .arena = .init(std.testing.allocator) };
     try r.start("/bin/sh", "no-such-command 1 2\n");
     defer r.stop();
@@ -205,6 +215,7 @@ test "the preview shows an error of main.tcl" {
 }
 
 test "a project with no main.tcl gives a note" {
+    if (comptime on_win) return error.SkipZigTest;
     var r: Run = .{ .arena = .init(std.testing.allocator) };
     try r.start("/bin/sh", null);
     defer r.stop();
@@ -212,6 +223,7 @@ test "a project with no main.tcl gives a note" {
 }
 
 test "the window writes .mcp.json and CLAUDE.md into the project" {
+    if (comptime on_win) return error.SkipZigTest;
     var r: Run = .{ .arena = .init(std.testing.allocator) };
     try r.start("/bin/sh", null);
     defer r.stop();
@@ -221,6 +233,7 @@ test "the window writes .mcp.json and CLAUDE.md into the project" {
 }
 
 test "the bridge drives the preview" {
+    if (comptime on_win) return error.SkipZigTest;
     var r: Run = .{ .arena = .init(std.testing.allocator) };
     try r.start("/bin/sh",
         \\set ::count 0
@@ -263,6 +276,7 @@ test "the bridge drives the preview" {
 extern "c" fn execve(path: [*:0]const u8, argv: [*:null]const ?[*:0]const u8, envp: [*:null]const ?[*:0]const u8) c_int;
 
 test "dockyard --mcp answers a client on stdin and stdout" {
+    if (comptime on_win) return error.SkipZigTest;
     var r: Run = .{ .arena = .init(std.testing.allocator) };
     try r.start("/bin/sh", "label .l -text ready; pack .l\n");
     defer r.stop();
@@ -324,6 +338,7 @@ test "dockyard --mcp answers a client on stdin and stdout" {
 }
 
 test "the pane shows the image of the preview and sends the input to it" {
+    if (comptime on_win) return error.SkipZigTest;
     var r: Run = .{ .arena = .init(std.testing.allocator) };
     try r.start("/bin/sh",
         \\set ::count 0
@@ -351,6 +366,7 @@ test "the pane shows the image of the preview and sends the input to it" {
 }
 
 test "the Build button makes the program of this computer, and the app list shows it" {
+    if (comptime on_win) return error.SkipZigTest;
     var r: Run = .{ .arena = .init(std.testing.allocator) };
     try r.start("/bin/sh", "label .l -text hi\npack .l\n");
     defer r.stop();
