@@ -17,17 +17,19 @@
 //! monitor of issue 15 reads these events.
 //!
 //! One thread accepts the connections, and each connection has its own
-//! thread with blocking sockets and `poll`. A mutex guards the allow
-//! list and the events. Tcl commands: `dockyard::proxy start ?port?`,
-//! `allow ?list?`, `attach channel` (a connection of the guest, from the
-//! relay of `sandbox.tcl`), `events`, and `stop`.
-//!
-//! The proxy uses the sockets of the C library, so on Windows each
-//! subcommand gives an error until the port of dockyard (dockyard#23).
+//! thread with blocking sockets and `poll`. A lock guards the allow list
+//! and the events. The sockets are the ones of `ztcl.sys`, the same on
+//! Linux, macOS, and Windows: the accept thread waits in `poll` with a
+//! timeout, so `stop` ends it on each system. Tcl commands:
+//! `dockyard::proxy start ?port?`, `allow ?list?`, `attach channel` (a
+//! connection of the guest, from the relay of `sandbox.tcl`), `events`,
+//! and `stop`.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const ztcl = @import("ztcl");
-const c = std.c;
+const sys = ztcl.sys;
+const Fd = sys.Fd;
 
 pub const Result = enum { allowed, blocked, failed, refused };
 
@@ -44,11 +46,22 @@ pub const Event = struct {
 /// The most events that wait for `events`. Older events go first.
 const max_events = 10_000;
 
+/// A lock for a short time: the allow list and the events.
+const Lock = struct {
+    m: std.atomic.Mutex = .unlocked,
+    fn lock(l: *Lock) void {
+        while (!l.m.tryLock()) std.Thread.yield() catch {};
+    }
+    fn unlock(l: *Lock) void {
+        l.m.unlock();
+    }
+};
+
 pub const Proxy = struct {
     gpa: std.mem.Allocator,
-    fd: c.fd_t,
+    fd: Fd,
     port: u16,
-    lock: c.pthread_mutex_t = .{},
+    lock: Lock = .{},
     allow_list: std.ArrayList([]const u8) = .empty,
     events: std.ArrayList(Event) = .empty,
     stopping: std.atomic.Value(bool) = .init(false),
@@ -57,18 +70,15 @@ pub const Proxy = struct {
     /// Listens on 127.0.0.1:`port` (0 for a free port) and starts the
     /// thread that accepts the connections.
     pub fn start(gpa: std.mem.Allocator, port: u16) !*Proxy {
-        const fd = c.socket(c.AF.INET, c.SOCK.STREAM | c.SOCK.CLOEXEC, 0);
-        if (fd < 0) return error.SystemResources;
-        errdefer _ = c.close(fd);
-        const one: c_int = 1;
-        _ = c.setsockopt(fd, c.SOL.SOCKET, c.SO.REUSEADDR, std.mem.asBytes(&one), @sizeOf(c_int));
-        var addr: c.sockaddr.in = .{ .port = std.mem.nativeToBig(u16, port), .addr = std.mem.nativeToBig(u32, 0x7f000001) };
-        if (c.bind(fd, @ptrCast(&addr), @sizeOf(c.sockaddr.in)) != 0) return error.AddressInUse;
-        if (c.listen(fd, 64) != 0) return error.SystemResources;
-        var len: c.socklen_t = @sizeOf(c.sockaddr.in);
-        _ = c.getsockname(fd, @ptrCast(&addr), &len);
+        const fd = switch (sys.listenAt(loopback(port), true)) {
+            .fd => |fd| fd,
+            .err => return error.AddressInUse,
+        };
+        errdefer sys.close(fd);
+        const at = sys.sockName(fd) orelse return error.SystemResources;
         const p = try gpa.create(Proxy);
-        p.* = .{ .gpa = gpa, .fd = fd, .port = std.mem.bigToNative(u16, addr.port) };
+        errdefer gpa.destroy(p);
+        p.* = .{ .gpa = gpa, .fd = fd, .port = at.port };
         p.thread = try std.Thread.spawn(.{}, acceptLoop, .{p});
         return p;
     }
@@ -77,9 +87,8 @@ pub const Proxy = struct {
     /// end on their own.
     pub fn stop(p: *Proxy) void {
         p.stopping.store(true, .release);
-        _ = c.shutdown(p.fd, 2);
         if (p.thread) |t| t.join();
-        _ = c.close(p.fd);
+        sys.close(p.fd);
         p.setAllow(&.{}) catch {};
         p.allow_list.deinit(p.gpa);
         for (p.events.items) |e| p.gpa.free(e.host);
@@ -89,24 +98,24 @@ pub const Proxy = struct {
 
     /// Replaces the allow list.
     pub fn setAllow(p: *Proxy, hosts: []const []const u8) !void {
-        _ = c.pthread_mutex_lock(&p.lock);
-        defer _ = c.pthread_mutex_unlock(&p.lock);
+        p.lock.lock();
+        defer p.lock.unlock();
         for (p.allow_list.items) |h| p.gpa.free(h);
         p.allow_list.clearRetainingCapacity();
         for (hosts) |h| try p.allow_list.append(p.gpa, try std.ascii.allocLowerString(p.gpa, h));
     }
 
     fn allowed(p: *Proxy, host: []const u8) bool {
-        _ = c.pthread_mutex_lock(&p.lock);
-        defer _ = c.pthread_mutex_unlock(&p.lock);
+        p.lock.lock();
+        defer p.lock.unlock();
         for (p.allow_list.items) |pat| if (matches(pat, host)) return true;
         return false;
     }
 
     fn record(p: *Proxy, e: Event) void {
         const host = p.gpa.dupe(u8, e.host) catch return;
-        _ = c.pthread_mutex_lock(&p.lock);
-        defer _ = c.pthread_mutex_unlock(&p.lock);
+        p.lock.lock();
+        defer p.lock.unlock();
         if (p.events.items.len >= max_events) p.gpa.free(p.events.orderedRemove(0).host);
         var copy = e;
         copy.host = host;
@@ -115,7 +124,7 @@ pub const Proxy = struct {
 
     /// Serves one connection that the caller opened, such as a vsock
     /// stream of the guest, in a thread of its own. The proxy closes it.
-    pub fn attach(p: *Proxy, conn: c.fd_t) !void {
+    pub fn attach(p: *Proxy, conn: Fd) !void {
         const t = try std.Thread.spawn(.{}, serve, .{ p, conn });
         t.detach();
     }
@@ -123,11 +132,18 @@ pub const Proxy = struct {
     /// Gives the events since the last call. The caller frees the list
     /// and each host with the allocator of the proxy.
     pub fn take(p: *Proxy) ![]Event {
-        _ = c.pthread_mutex_lock(&p.lock);
-        defer _ = c.pthread_mutex_unlock(&p.lock);
+        p.lock.lock();
+        defer p.lock.unlock();
         return p.events.toOwnedSlice(p.gpa);
     }
 };
+
+fn loopback(port: u16) sys.Addr {
+    var a: sys.Addr = .{ .port = port };
+    a.bytes[0] = 127;
+    a.bytes[3] = 1;
+    return a;
+}
 
 /// True when the host matches the allow list entry `pat` (lower case).
 pub fn matches(pat: []const u8, host: []const u8) bool {
@@ -140,35 +156,62 @@ pub fn matches(pat: []const u8, host: []const u8) bool {
     return std.ascii.eqlIgnoreCase(pat, host);
 }
 
+/// The time of the wall clock in ms since 1970.
 fn nowMs() i64 {
-    var ts: c.timespec = undefined;
-    _ = c.clock_gettime(c.CLOCK.REALTIME, &ts);
+    if (comptime builtin.os.tag == .windows) {
+        var ft: u64 = 0;
+        GetSystemTimePreciseAsFileTime(&ft);
+        // 100 ns units since 1601.
+        return @divFloor(@as(i64, @intCast(ft)) - 116_444_736_000_000_000, 10_000);
+    }
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
     return @as(i64, ts.sec) * 1000 + @divFloor(@as(i64, ts.nsec), 1_000_000);
 }
 
+extern "kernel32" fn GetSystemTimePreciseAsFileTime(ft: *u64) callconv(.winapi) void;
+
+/// The wait of the accept thread in `poll`, so `stop` ends it in at most
+/// this time.
+const accept_wait_ms = 200;
+
 fn acceptLoop(p: *Proxy) void {
     while (!p.stopping.load(.acquire)) {
-        const conn = c.accept(p.fd, null, null);
-        if (conn < 0) {
-            if (p.stopping.load(.acquire)) return;
-            continue;
-        }
+        var want = [1]sys.Want{.{ .fd = p.fd, .read = true }};
+        sys.poll(p.gpa, &want, accept_wait_ms);
+        if (!want[0].can_read) continue;
+        const conn = (sys.accept(p.fd) orelse continue).fd;
+        sys.setBlocking(conn, true);
         const t = std.Thread.spawn(.{}, serve, .{ p, conn }) catch {
-            _ = c.close(conn);
+            sys.close(conn);
             continue;
         };
         t.detach();
     }
 }
 
-fn writeAll(fd: c.fd_t, bytes: []const u8) bool {
+fn writeAll(fd: Fd, bytes: []const u8) bool {
     var rest = bytes;
     while (rest.len > 0) {
-        const n = c.write(fd, rest.ptr, rest.len);
-        if (n <= 0) return false;
-        rest = rest[@intCast(n)..];
+        switch (sys.write(fd, rest)) {
+            .n => |n| {
+                if (n == 0) return false;
+                rest = rest[n..];
+            },
+            .again => std.Thread.yield() catch {},
+            .err => return false,
+        }
     }
     return true;
+}
+
+/// A read of some bytes: the count, 0 at the end, or null on an error.
+fn readSome(fd: Fd, buf: []u8) ?usize {
+    while (true) switch (sys.read(fd, buf)) {
+        .n => |n| return n,
+        .again => std.Thread.yield() catch {},
+        .err => return null,
+    };
 }
 
 /// The target of a request line: `CONNECT host:port HTTP/1.1`.
@@ -187,16 +230,16 @@ pub fn parseConnect(line: []const u8) ?Target {
     return .{ .host = host, .port = port };
 }
 
-fn serve(p: *Proxy, conn: c.fd_t) void {
-    defer _ = c.close(conn);
+fn serve(p: *Proxy, conn: Fd) void {
+    defer sys.close(conn);
     const t0 = nowMs();
     // The request head: up to the empty line, 8 KB at most.
     var buf: [8192]u8 = undefined;
     var len: usize = 0;
     const head_end = while (len < buf.len) {
-        const n = c.read(conn, buf[len..].ptr, buf.len - len);
-        if (n <= 0) return;
-        len += @intCast(n);
+        const n = readSome(conn, buf[len..]) orelse return;
+        if (n == 0) return;
+        len += n;
         if (std.mem.indexOf(u8, buf[0..len], "\r\n\r\n")) |i| break i + 4;
     } else return;
     const line_end = std.mem.indexOf(u8, buf[0..len], "\r\n") orelse return;
@@ -210,12 +253,12 @@ fn serve(p: *Proxy, conn: c.fd_t) void {
         p.record(.{ .start_ms = t0, .host = target.host, .port = target.port, .result = .blocked });
         return;
     }
-    const up = connectTo(target) orelse {
+    const up = connectTo(p.gpa, target) orelse {
         _ = writeAll(conn, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
         p.record(.{ .start_ms = t0, .host = target.host, .port = target.port, .result = .failed, .ms = nowMs() - t0 });
         return;
     };
-    defer _ = c.close(up);
+    defer sys.close(up);
     if (!writeAll(conn, "HTTP/1.1 200 Connection established\r\n\r\n")) return;
     var sent: u64 = 0;
     var got: u64 = 0;
@@ -224,47 +267,43 @@ fn serve(p: *Proxy, conn: c.fd_t) void {
         if (!writeAll(up, buf[head_end..len])) return;
         sent += len - head_end;
     }
-    relay(conn, up, &sent, &got);
+    relay(p.gpa, conn, up, &sent, &got);
     p.record(.{ .start_ms = t0, .host = target.host, .port = target.port, .result = .allowed, .up = sent, .down = got, .ms = nowMs() - t0 });
 }
 
-fn connectTo(t: Target) ?c.fd_t {
-    var name_buf: [256]u8 = undefined;
-    if (t.host.len >= name_buf.len) return null;
-    @memcpy(name_buf[0..t.host.len], t.host);
-    name_buf[t.host.len] = 0;
-    var port_buf: [8]u8 = undefined;
-    const port_z = std.fmt.bufPrintSentinel(&port_buf, "{d}", .{t.port}, 0) catch return null;
-    const hints: c.addrinfo = .{ .flags = .{}, .family = c.AF.UNSPEC, .socktype = c.SOCK.STREAM, .protocol = 0, .addrlen = 0, .addr = null, .canonname = null, .next = null };
-    var res: ?*c.addrinfo = null;
-    if (@backingInt(c.getaddrinfo(@ptrCast(&name_buf), port_z.ptr, &hints, &res)) != 0) return null;
-    defer c.freeaddrinfo(res.?);
-    var ai = res;
-    while (ai) |a| : (ai = a.next) {
-        const fd = c.socket(@intCast(a.family), c.SOCK.STREAM | c.SOCK.CLOEXEC, 0);
-        if (fd < 0) continue;
-        if (c.connect(fd, a.addr.?, a.addrlen) == 0) return fd;
-        _ = c.close(fd);
+/// A connection to each address of the host in turn, until one answers.
+fn connectTo(gpa: std.mem.Allocator, t: Target) ?Fd {
+    var addrs: std.ArrayList(sys.Addr) = .empty;
+    defer addrs.deinit(gpa);
+    sys.resolve(gpa, t.host, &addrs) catch return null;
+    for (addrs.items) |a| {
+        var at = a;
+        at.port = t.port;
+        switch (sys.connectTo(at, null, true)) {
+            .fd => |fd| {
+                sys.setBlocking(fd, true);
+                return fd;
+            },
+            .err => {},
+        }
     }
     return null;
 }
 
 /// Copies bytes both ways until one side ends.
-fn relay(client: c.fd_t, host: c.fd_t, sent: *u64, got: *u64) void {
+fn relay(gpa: std.mem.Allocator, client: Fd, host: Fd, sent: *u64, got: *u64) void {
     var buf: [16384]u8 = undefined;
-    var fds = [_]c.pollfd{
-        .{ .fd = client, .events = c.POLL.IN, .revents = 0 },
-        .{ .fd = host, .events = c.POLL.IN, .revents = 0 },
-    };
+    const ends = [2]Fd{ client, host };
     while (true) {
-        if (c.poll(&fds, 2, -1) <= 0) return;
-        for (fds, 0..) |f, i| {
-            if (f.revents & (c.POLL.IN | c.POLL.HUP | c.POLL.ERR) == 0) continue;
-            const n = c.read(f.fd, &buf, buf.len);
-            if (n <= 0) return;
+        var wants = [2]sys.Want{ .{ .fd = client, .read = true }, .{ .fd = host, .read = true } };
+        sys.poll(gpa, &wants, -1);
+        for (wants, 0..) |w, i| {
+            if (!w.can_read) continue;
+            const n = readSome(ends[i], &buf) orelse return;
+            if (n == 0) return;
             const to = if (i == 0) host else client;
-            if (!writeAll(to, buf[0..@intCast(n)])) return;
-            if (i == 0) sent.* += @intCast(n) else got.* += @intCast(n);
+            if (!writeAll(to, buf[0..n])) return;
+            if (i == 0) sent.* += n else got.* += n;
         }
     }
 }
@@ -281,14 +320,13 @@ pub fn register(it: *ztcl.Interp) !void {
 /// gives the allow list. `events` gives the events since the last call,
 /// each a dict. `stop` ends the proxy.
 fn cmdProxy(it: *ztcl.Interp, argv: []const ztcl.Value, _: ?*ztcl.interp.Cmd) ztcl.Error!ztcl.Value {
-    if (comptime @import("builtin").os.tag == .windows) return it.fail("proxy: the egress proxy is not available on Windows yet", .{});
     if (argv.len < 2) return it.wrongArgs("dockyard::proxy start|allow|attach|events|stop ?arg?");
     const sub = try it.str(argv[1]);
     const a = it.alloc();
     if (std.mem.eql(u8, sub, "start")) {
         if (the_proxy != null) return it.fail("the proxy runs", .{});
         const port: u16 = if (argv.len > 2) @intCast(std.math.clamp(try it.int(argv[2]), 0, 65535)) else 0;
-        the_proxy = Proxy.start(std.heap.c_allocator, port) catch |e| return it.fail("proxy: {s}", .{@errorName(e)});
+        the_proxy = Proxy.start(std.heap.smp_allocator, port) catch |e| return it.fail("proxy: {s}", .{@errorName(e)});
         return .{ .int = the_proxy.?.port };
     }
     const p = the_proxy orelse return it.fail("the proxy does not run", .{});
@@ -304,8 +342,8 @@ fn cmdProxy(it: *ztcl.Interp, argv: []const ztcl.Value, _: ?*ztcl.interp.Cmd) zt
             for (items) |v| try hosts.append(a, try it.str(v));
             try p.setAllow(hosts.items);
         }
-        _ = c.pthread_mutex_lock(&p.lock);
-        defer _ = c.pthread_mutex_unlock(&p.lock);
+        p.lock.lock();
+        defer p.lock.unlock();
         var out: std.ArrayList(ztcl.Value) = .empty;
         for (p.allow_list.items) |h| try out.append(a, .{ .str = try a.dupe(u8, h) });
         return ztcl.value.newList(a, out.items);
@@ -319,8 +357,9 @@ fn cmdProxy(it: *ztcl.Interp, argv: []const ztcl.Value, _: ?*ztcl.interp.Cmd) zt
         if (ch.rbuf.items.len > ch.rpos or ch.wbuf.items.len > 0 or ch.wfd >= 0)
             return it.fail("proxy: the channel {s} has buffered bytes or two descriptors", .{name});
         _ = ztcl.chan.release(it, name);
+        sys.setBlocking(ch.fd, true);
         p.attach(ch.fd) catch |e| {
-            _ = c.close(ch.fd);
+            sys.close(ch.fd);
             return it.fail("proxy: {s}", .{@errorName(e)});
         };
         return .empty;
@@ -363,46 +402,46 @@ test "a CONNECT line gives the host and the port" {
     try std.testing.expect(parseConnect("CONNECT x:0 HTTP/1.1") == null);
 }
 
-fn listenLocal() !struct { fd: c.fd_t, port: u16 } {
-    const fd = c.socket(c.AF.INET, c.SOCK.STREAM | c.SOCK.CLOEXEC, 0);
-    var addr: c.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
-    if (c.bind(fd, @ptrCast(&addr), @sizeOf(c.sockaddr.in)) != 0) return error.AddressInUse;
-    _ = c.listen(fd, 4);
-    var len: c.socklen_t = @sizeOf(c.sockaddr.in);
-    _ = c.getsockname(fd, @ptrCast(&addr), &len);
-    return .{ .fd = fd, .port = std.mem.bigToNative(u16, addr.port) };
+fn listenLocal() !struct { fd: Fd, port: u16 } {
+    const fd = switch (sys.listenAt(loopback(0), false)) {
+        .fd => |fd| fd,
+        .err => return error.AddressInUse,
+    };
+    return .{ .fd = fd, .port = (sys.sockName(fd) orelse return error.SystemResources).port };
 }
 
-fn echoOnce(fd: c.fd_t) void {
-    const conn = c.accept(fd, null, null);
-    if (conn < 0) return;
-    defer _ = c.close(conn);
+fn echoOnce(fd: Fd) void {
+    var want = [1]sys.Want{.{ .fd = fd, .read = true }};
+    sys.poll(std.testing.allocator, &want, 5000);
+    const conn = (sys.accept(fd) orelse return).fd;
+    defer sys.close(conn);
+    sys.setBlocking(conn, true);
     var buf: [64]u8 = undefined;
-    const n = c.read(conn, &buf, buf.len);
-    if (n > 0) _ = writeAll(conn, buf[0..@intCast(n)]);
+    const n = readSome(conn, &buf) orelse return;
+    if (n > 0) _ = writeAll(conn, buf[0..n]);
 }
 
 fn ask(port: u16, request: []const u8, reply: []u8) ![]const u8 {
-    const fd = c.socket(c.AF.INET, c.SOCK.STREAM | c.SOCK.CLOEXEC, 0);
-    defer _ = c.close(fd);
-    var addr: c.sockaddr.in = .{ .port = std.mem.nativeToBig(u16, port), .addr = std.mem.nativeToBig(u32, 0x7f000001) };
-    if (c.connect(fd, @ptrCast(&addr), @sizeOf(c.sockaddr.in)) != 0) return error.ConnectionRefused;
+    const fd = switch (sys.connectTo(loopback(port), null, true)) {
+        .fd => |fd| fd,
+        .err => return error.ConnectionRefused,
+    };
+    defer sys.close(fd);
+    sys.setBlocking(fd, true);
     if (!writeAll(fd, request)) return error.BrokenPipe;
     var len: usize = 0;
     while (len < reply.len) {
-        const n = c.read(fd, reply[len..].ptr, reply.len - len);
-        if (n <= 0) break;
-        len += @intCast(n);
+        const n = readSome(fd, reply[len..]) orelse break;
+        if (n == 0) break;
+        len += n;
     }
     return reply[0..len];
 }
 
 test "the proxy relays an allowed host and blocks another one" {
-    // The proxy uses the sockets of the C library, which Windows has not.
-    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
     const gpa = std.testing.allocator;
     const server = try listenLocal();
-    defer _ = c.close(server.fd);
+    defer sys.close(server.fd);
     const echo = try std.Thread.spawn(.{}, echoOnce, .{server.fd});
     const p = try Proxy.start(gpa, 0);
     defer p.stop();
@@ -416,18 +455,17 @@ test "the proxy relays an allowed host and blocks another one" {
     const blocked = try ask(p.port, "CONNECT other.example:443 HTTP/1.1\r\n\r\n", &reply);
     try std.testing.expect(std.mem.startsWith(u8, blocked, "HTTP/1.1 403"));
     // The relay thread records its event when both sides end.
-    var evs: []Event = &.{};
     var all: std.ArrayList(Event) = .empty;
     defer {
         for (all.items) |e| gpa.free(e.host);
         all.deinit(gpa);
     }
-    var k: usize = 0;
-    while (all.items.len < 2 and k < 200) : (k += 1) {
-        evs = try p.take();
+    const end = nowMs() + 2000;
+    while (all.items.len < 2 and nowMs() < end) {
+        const evs = try p.take();
         defer gpa.free(evs);
         try all.appendSlice(gpa, evs);
-        if (all.items.len < 2) _ = c.nanosleep(&.{ .sec = 0, .nsec = 10_000_000 }, null);
+        if (all.items.len < 2) std.Thread.yield() catch {};
     }
     try std.testing.expectEqual(@as(usize, 2), all.items.len);
     var saw_allowed = false;
