@@ -16,7 +16,7 @@ In the commands below, `SKILL` is the folder of this file.
 3. Run it: `SKILL/bin/dockyard run my-app`. Look at `my-app/shot.png`. A script error goes to stderr, and the exit status is not 0.
 4. Check the behavior with a check script (below): `SKILL/bin/dockyard check my-app check.tcl`. Keep the check script outside the app folder.
 5. Change the app, and do steps 3 and 4 again until the app works and looks right.
-6. Build: `SKILL/bin/dockyard build my-app` for all the targets, or `SKILL/bin/dockyard build my-app x86_64-windows aarch64-macos` for some. The files are `my-app/build/TARGET/my-app`, with `.exe` for Windows.
+6. Build: `SKILL/bin/dockyard build my-app` for all the targets, or `SKILL/bin/dockyard build my-app x86_64-windows aarch64-macos` for some. The files are `my-app/build/TARGET/my-app`, with `.exe` for Windows. For macOS it is the app folder `my-app.app`: zip the folder for the download.
 7. Give the person the program files of their platforms as downloads, and the screenshot.
 
 Ask the person which platforms they use when the request does not say. The targets are `x86_64-linux`, `aarch64-linux`, `x86_64-macos`, `aarch64-macos` (Apple silicon), `x86_64-windows`, and `aarch64-windows`.
@@ -25,7 +25,7 @@ Ask the person which platforms they use when the request does not say. The targe
 
 - A program file is the ztk program with the app in it. It needs no install.
 - On Linux, run `chmod +x my-app` first.
-- On macOS, the file has no signature from a known developer. Right click the file and select Open the first time, or run `xattr -d com.apple.quarantine my-app`.
+- On macOS, the app has an ad hoc signature and no signature from a known developer. Unzip it, right click `my-app.app` and select Open the first time, or run `xattr -dr com.apple.quarantine my-app.app`.
 - Today only the Windows files show a window. The Linux files of this skill are static and have no Wayland backend, and the macOS files have no AppKit backend, because the skill builds them off a Mac. Each one stops with a message. Say this when the person asks for Linux or macOS. A person on Linux or macOS can build the app with dockyard or ztk on their own computer.
 - The app has the `file`, `channels`, and `clock` capabilities, and no network and no program start.
 
