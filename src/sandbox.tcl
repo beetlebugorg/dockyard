@@ -59,9 +59,12 @@ proc ::dockyard::sandbox::boot {args} {
     set vm [ztcl::vm create {*}$create]
     if {[catch {
         ztcl::vm start $vm
+        # The agent of ztcl mounts share0 at /mnt/share when the guest
+        # starts, with the mode of -share. A second mount of the same tag
+        # fails with EBUSY, so a bind mount puts it at GUEST.
         if {$share ne ""} {
-            set ro [expr {[lindex $share 2] ne "rw"}]
-            ztcl::vm mount $vm share0 [lindex $share 1] {*}[expr {$ro ? "-readonly" : ""}]
+            Check [ztcl::vm exec $vm -- /bin/busybox sh -c \
+                {/bin/busybox mkdir -p "$1" && /bin/busybox mount -o bind /mnt/share "$1"} sh [lindex $share 1]] "the mount of the share"
         }
         set f [open [dict get $o -helper] rb]
         fconfigure $f -translation binary

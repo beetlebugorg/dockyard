@@ -223,6 +223,13 @@ fn hasKvm() bool {
     return c.access("/dev/kvm", 6) == 0 and c.access("/dev/vhost-vsock", 6) == 0;
 }
 
+fn writeText(a: std.mem.Allocator, dst: []const u8, text: []const u8) !void {
+    const out = c.open((try z(a, dst)).ptr, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(c.mode_t, 0o644));
+    if (out < 0) return error.AccessDenied;
+    defer _ = c.close(out);
+    try writeAll(out, text);
+}
+
 fn copyFile(a: std.mem.Allocator, src: []const u8, dst: []const u8) !void {
     const in = c.open((try z(a, src)).ptr, .{ .ACCMODE = .RDONLY }, @as(c.mode_t, 0));
     if (in < 0) return error.FileNotFound;
@@ -252,7 +259,7 @@ fn hostSleep(_: ?*anyopaque, us: i64) void {
 
 const kvm_script =
     \\set kernel [expr {[file exists bzImage] ? "bzImage" : "Image"}]
-    \\set vm [dockyard::sandbox::boot -kernel $kernel -initrd agent.cpio -helper dockyard-guest -memory 128]
+    \\set vm [dockyard::sandbox::boot -kernel $kernel -initrd agent.cpio -helper dockyard-guest -memory 128 -share {/ /work rw}]
     \\set ::out ""
     \\set ::events {}
     \\proc out {t} {append ::out $t}
@@ -265,7 +272,7 @@ const kvm_script =
     \\dockyard::sandbox::hooks $vm /root
     \\after 200
     \\set s [dockyard::sandbox::session $vm -rows 30 -cols 100 -output out -exit ex]
-    \\dockyard::sandbox::input $s "/bin/busybox stty size; echo héllo; /bin/busybox ip -o link show lo; printf 'CONNECT blocked.invalid:443 HTTP/1.1\\r\\n\\r\\n' | /bin/busybox nc 127.0.0.1 3128; echo '{\"hook_event_name\":\"Stop\",\"session_id\":\"k1\"}' | /tmp/dockyard-guest hook; /bin/busybox grep -q PostToolUse /root/.claude/settings.json && echo settings-ok; /bin/busybox sleep 0.3; exit 4\n"
+    \\dockyard::sandbox::input $s "/bin/busybox stty size; echo héllo; /bin/busybox ip -o link show lo; printf 'CONNECT blocked.invalid:443 HTTP/1.1\\r\\n\\r\\n' | /bin/busybox nc 127.0.0.1 3128; echo '{\"hook_event_name\":\"Stop\",\"session_id\":\"k1\"}' | /tmp/dockyard-guest hook; /bin/busybox cat /work/hello.txt; echo from-guest > /work/out.txt; /bin/busybox grep -q PostToolUse /root/.claude/settings.json && echo settings-ok; /bin/busybox sleep 0.3; exit 4\n"
     \\after 10000 {set ::done timeout}
     \\vwait ::done
     \\set argv {}
@@ -276,7 +283,10 @@ const kvm_script =
     \\}
     \\ztcl::vm delete $vm
     \\dockyard::proxy stop
-    \\list $::done [string match "*30 100*héllo*LOOPBACK,UP*HTTP/1.1 403*settings-ok*" $::out] [expr {[list /bin/busybox sleep 0.3] in $argv}] $hooks
+    \\set f [open out.txt]
+    \\set back [string trim [read $f]]
+    \\close $f
+    \\list $::done [string match "*30 100*héllo*LOOPBACK,UP*HTTP/1.1 403*from-host*settings-ok*" $::out] [expr {[list /bin/busybox sleep 0.3] in $argv}] $hooks $back
 ;
 
 test "the terminal of the sandbox runs on a PTY of a guest over vsock" {
@@ -293,6 +303,7 @@ test "the terminal of the sandbox runs on a PTY of a guest over vsock" {
     try copyFile(a, try std.fmt.allocPrint(a, "{s}/{s}", .{ src, kernel }), try std.fmt.allocPrint(a, "{s}/{s}", .{ dir, kernel }));
     try copyFile(a, try std.fmt.allocPrint(a, "{s}/agent.cpio", .{src}), try std.fmt.allocPrint(a, "{s}/agent.cpio", .{dir}));
     try copyFile(a, std.fmt.comptimePrint("{s}", .{test_options.guest_helper}), try std.fmt.allocPrint(a, "{s}/dockyard-guest", .{dir}));
+    try writeText(a, try std.fmt.allocPrint(a, "{s}/hello.txt", .{dir}), "from-host\n");
 
     var it: ztcl.Interp = undefined;
     try it.init(std.heap.page_allocator);
@@ -307,5 +318,5 @@ test "the terminal of the sandbox runs on a PTY of a guest over vsock" {
         std.debug.print("{s}\n", .{it.str(it.result) catch "error"});
         return error.TclError;
     };
-    try std.testing.expectEqualStrings("4 1 1 {Stop k1}", try it.str(res));
+    try std.testing.expectEqualStrings("4 1 1 {Stop k1} from-guest", try it.str(res));
 }
