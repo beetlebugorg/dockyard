@@ -20,6 +20,9 @@
 //! thread with blocking sockets and `poll`. A mutex guards the allow
 //! list and the events. Tcl commands: `dockyard::proxy start ?port?`,
 //! `allow ?list?`, `events`, and `stop`.
+//!
+//! The proxy uses the sockets of the C library, so on Windows each
+//! subcommand gives an error until the port of dockyard (dockyard#23).
 
 const std = @import("std");
 const ztcl = @import("ztcl");
@@ -226,7 +229,7 @@ fn connectTo(t: Target) ?c.fd_t {
     const port_z = std.fmt.bufPrintSentinel(&port_buf, "{d}", .{t.port}, 0) catch return null;
     const hints: c.addrinfo = .{ .flags = .{}, .family = c.AF.UNSPEC, .socktype = c.SOCK.STREAM, .protocol = 0, .addrlen = 0, .addr = null, .canonname = null, .next = null };
     var res: ?*c.addrinfo = null;
-    if (@intFromEnum(c.getaddrinfo(@ptrCast(&name_buf), port_z.ptr, &hints, &res)) != 0) return null;
+    if (@backingInt(c.getaddrinfo(@ptrCast(&name_buf), port_z.ptr, &hints, &res)) != 0) return null;
     defer c.freeaddrinfo(res.?);
     var ai = res;
     while (ai) |a| : (ai = a.next) {
@@ -270,6 +273,7 @@ pub fn register(it: *ztcl.Interp) !void {
 /// gives the allow list. `events` gives the events since the last call,
 /// each a dict. `stop` ends the proxy.
 fn cmdProxy(it: *ztcl.Interp, argv: []const ztcl.Value, _: ?*ztcl.interp.Cmd) ztcl.Error!ztcl.Value {
+    if (comptime @import("builtin").os.tag == .windows) return it.fail("proxy: the egress proxy is not available on Windows yet", .{});
     if (argv.len < 2) return it.wrongArgs("dockyard::proxy start|allow|events|stop ?arg?");
     const sub = try it.str(argv[1]);
     const a = it.alloc();
@@ -371,6 +375,8 @@ fn ask(port: u16, request: []const u8, reply: []u8) ![]const u8 {
 }
 
 test "the proxy relays an allowed host and blocks another one" {
+    // The proxy uses the sockets of the C library, which Windows has not.
+    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
     const gpa = std.testing.allocator;
     const server = try listenLocal();
     defer _ = c.close(server.fd);

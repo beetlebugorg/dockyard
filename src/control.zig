@@ -16,7 +16,8 @@
 //! drawn frames. `::dockyard::bridge::restart` ends the child with
 //! status 75 after the answer, and the window script starts it again.
 //!
-//! The socket file has mode 0600. A request can do what the preview
+//! The socket file has mode 0600, and on Windows it is in the temp
+//! folder of the user (`sock.zig`). A request can do what the preview
 //! script can do, with the same capabilities.
 //!
 //! `call` is the client side: the MCP server and the preview pane of
@@ -25,6 +26,7 @@
 const std = @import("std");
 const ztcl = @import("ztcl");
 const ztk = @import("ztk");
+const sock = @import("sock.zig");
 
 const bridge_script = @embedFile("bridge.tcl");
 
@@ -39,7 +41,7 @@ const poll_us = 20 * 1000;
 pub const Control = struct {
     gpa: std.mem.Allocator,
     app: *ztk.App,
-    fd: c_int,
+    fd: sock.Fd,
     out: ?ztcl.Output,
     err: ztcl.Output,
     log: std.ArrayList(u8) = .empty,
@@ -98,52 +100,35 @@ pub fn start(gpa: std.mem.Allocator, app: *ztk.App, path: [:0]const u8, err: ztc
     return c;
 }
 
-fn listen(path: [:0]const u8) !c_int {
-    var addr: std.c.sockaddr.un = .{ .path = undefined };
-    if (path.len >= addr.path.len) return error.NameTooLong;
-    @memset(&addr.path, 0);
-    @memcpy(addr.path[0..path.len], path);
-    const fd = std.c.socket(std.c.AF.UNIX, std.c.SOCK.STREAM | std.c.SOCK.CLOEXEC, 0);
-    if (fd < 0) return error.SystemResources;
-    errdefer _ = std.c.close(fd);
-    // A socket file of an earlier run blocks the bind.
-    _ = std.c.unlink(path.ptr);
-    if (std.c.bind(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.un)) != 0) return error.AddressInUse;
-    _ = std.c.chmod(path.ptr, 0o600);
-    if (std.c.listen(fd, 8) != 0) return error.SystemResources;
+fn listen(path: [:0]const u8) !sock.Fd {
+    const fd = try sock.open();
+    errdefer sock.close(fd);
+    try sock.bindListen(fd, path);
     return fd;
 }
 
 fn tick(ctx: ?*anyopaque) void {
     const c: *Control = @ptrCast(@alignCast(ctx.?));
-    while (true) {
-        var p = [_]std.c.pollfd{.{ .fd = c.fd, .events = std.c.POLL.IN, .revents = 0 }};
-        if (std.c.poll(&p, 1, 0) <= 0 or p[0].revents & std.c.POLL.IN == 0) break;
-        const conn = std.c.accept(c.fd, null, null);
-        if (conn < 0) break;
+    while (sock.readable(c.fd)) {
+        const conn = sock.accept(c.fd) orelse break;
         serve(c, conn);
-        _ = std.c.close(conn);
+        sock.close(conn);
         if (c.restart) c.exit(restart_status);
     }
     _ = c.app.loop.addNative(poll_us, tick, c) catch {};
 }
 
-fn setTimeout(fd: c_int, opt: u32, sec: i64) void {
-    const tv: std.c.timeval = .{ .sec = @intCast(sec), .usec = 0 };
-    _ = std.c.setsockopt(fd, std.c.SOL.SOCKET, opt, std.mem.asBytes(&tv), @sizeOf(std.c.timeval));
-}
-
 /// Reads one request line from `conn`, runs it, and writes the answer.
-fn serve(c: *Control, conn: c_int) void {
-    setTimeout(conn, std.c.SO.RCVTIMEO, 2);
-    setTimeout(conn, std.c.SO.SNDTIMEO, 10);
+fn serve(c: *Control, conn: sock.Fd) void {
+    sock.setTimeout(conn, .recv, 2000);
+    sock.setTimeout(conn, .send, 10_000);
     var arena = std.heap.ArenaAllocator.init(c.gpa);
     defer arena.deinit();
     const a = arena.allocator();
     var line: std.ArrayList(u8) = .empty;
     var buf: [4096]u8 = undefined;
     while (std.mem.indexOfScalar(u8, line.items, '\n') == null) {
-        const n = std.c.read(conn, &buf, buf.len);
+        const n = sock.read(conn, &buf);
         if (n <= 0) return;
         line.appendSlice(a, buf[0..@intCast(n)]) catch return;
         if (line.items.len > request_max) return;
@@ -202,10 +187,10 @@ fn evalGlobal(c: *Control, a: std.mem.Allocator, script: []const u8) Result {
     return .{ .ok = true, .text = a.dupe(u8, it.str(v) catch "") catch "" };
 }
 
-fn writeAll(fd: c_int, bytes: []const u8) void {
+fn writeAll(fd: sock.Fd, bytes: []const u8) void {
     var rest = bytes;
     while (rest.len > 0) {
-        const n = std.c.write(fd, rest.ptr, rest.len);
+        const n = sock.write(fd, rest);
         if (n <= 0) return;
         rest = rest[@intCast(n)..];
     }
@@ -217,29 +202,23 @@ pub const Reply = struct { ok: bool, result: []const u8 = "", @"error": []const 
 /// The read ends after `timeout_ms` with no data, for example when a
 /// script of the child runs a loop that does not end.
 pub fn call(a: std.mem.Allocator, path: [:0]const u8, script: []const u8, timeout_ms: u32) !Reply {
-    var addr: std.c.sockaddr.un = .{ .path = undefined };
-    if (path.len >= addr.path.len) return error.NameTooLong;
-    @memset(&addr.path, 0);
-    @memcpy(addr.path[0..path.len], path);
-    const fd = std.c.socket(std.c.AF.UNIX, std.c.SOCK.STREAM | std.c.SOCK.CLOEXEC, 0);
-    if (fd < 0) return error.SystemResources;
-    defer _ = std.c.close(fd);
-    if (std.c.connect(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.un)) != 0) return error.ConnectionRefused;
+    const fd = try sock.open();
+    defer sock.close(fd);
+    try sock.connect(fd, path);
     var req: std.Io.Writer.Allocating = .init(a);
     try std.json.Stringify.value(.{ .tcl = script }, .{}, &req.writer);
     try req.writer.writeByte('\n');
     var rest = req.written();
     while (rest.len > 0) {
-        const n = std.c.write(fd, rest.ptr, rest.len);
+        const n = sock.write(fd, rest);
         if (n <= 0) return error.BrokenPipe;
         rest = rest[@intCast(n)..];
     }
-    const tv: std.c.timeval = .{ .sec = @intCast(timeout_ms / 1000), .usec = @intCast((timeout_ms % 1000) * 1000) };
-    _ = std.c.setsockopt(fd, std.c.SOL.SOCKET, std.c.SO.RCVTIMEO, std.mem.asBytes(&tv), @sizeOf(std.c.timeval));
+    sock.setTimeout(fd, .recv, timeout_ms);
     var answer: std.ArrayList(u8) = .empty;
     var buf: [1 << 16]u8 = undefined;
     while (true) {
-        const n = std.c.read(fd, &buf, buf.len);
+        const n = sock.read(fd, &buf);
         if (n < 0) return error.Timeout;
         if (n == 0) break;
         try answer.appendSlice(a, buf[0..@intCast(n)]);
