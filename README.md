@@ -55,7 +55,7 @@ npm install -g @anthropic-ai/claude-code
 - **The terminal pane** is a `ztk::terminal` widget on a pseudo-terminal (`ztcl::pty`). It runs `claude` from the `PATH`, or your shell when the `PATH` has no `claude`. `--agent PROGRAM` runs another program.
 - **The preview pane** runs `main.tcl` in a child process on the headless backend of ztk. A file watcher (`ztcl::watch`) starts the child again 150 ms after the last change. The pane shows the image of the child (`ztk::snapshot`) and sends your input to it (`ztk::inject`).
 - **The MCP tools** (`dockyard --mcp`) give Claude Code the preview: `screenshot`, `widgets`, `eval`, `click`, `type`, `key`, `scroll`, `errors`, `log`, and `restart`.
-- **Build** makes native binaries of the app with `ztk bundle`. It is not in dockyard yet.
+- **Build** makes one program file of the app for each selected target with `ztk bundle`, in `build/TARGET/` of the project. **Apps** lists your apps and their programs.
 
 The [user guide](docs/guide.md) has the details.
 
@@ -65,7 +65,8 @@ The [user guide](docs/guide.md) has the details.
 - The preview is a sandbox. It has the `file`, `channels`, and `clock` capabilities in the project folder, and no `exec` or `socket`.
 - Each change starts the app again, so the state of the app starts again.
 - CI builds and tests dockyard on Linux only.
-- The Build button, the app list, and the history are not in dockyard yet. [docs/dev/status.md](docs/dev/status.md) has the state of each step.
+- A macOS program made on Linux or Windows has only the headless backend, and it shows no window. Build dockyard on a Mac for macOS apps.
+- The history pane is not in dockyard yet. [docs/dev/status.md](docs/dev/status.md) has the state of each step.
 
 ## Links
 

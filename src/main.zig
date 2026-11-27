@@ -28,6 +28,7 @@ const ztk = @import("ztk");
 const host = @import("host.zig");
 const control = @import("control.zig");
 const mcp = @import("mcp.zig");
+const apps = @import("apps.zig");
 
 const window_script = @embedFile("dockyard.tcl");
 
@@ -153,6 +154,7 @@ pub fn main(init: std.process.Init) !void {
         try host.allowPreview(&it, std.fs.path.dirname(f) orelse "/");
     } else {
         try host.allow(&it, folder, env);
+        try apps.register(&it, io, folder);
         try host.setVars(&it, .{
             .project = folder,
             .agent = agent,

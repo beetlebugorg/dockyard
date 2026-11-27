@@ -77,8 +77,24 @@ With these tools, the agent program gets images of the app and tests it.
 
 ## Build
 
-The Build button is not in dockyard yet. [docs/dev/status.md](dev/status.md) has its state.
+The bar has a check button for each target of `ztk bundle`: `x86_64-linux`, `aarch64-linux`, `x86_64-macos`, `aarch64-macos`, `x86_64-windows`, and `aarch64-windows`. The target of your computer is on at the start. A target is off and gray when the ztk program of the target is not next to dockyard.
+
+Click Build. For each selected target, dockyard copies the ztk program of the target and puts the app in it (`ztk bundle`). The output is one program file, `build/TARGET/NAME` in the project, with `.exe` for Windows. `NAME` is the name of the project folder. The bar shows the result. An error shows in the output pane below the preview.
+
+The app is `main.tcl` and the other files and folders of the project. The program leaves out the hidden files, `build/`, `CLAUDE.md`, and `LICENSE`. The program gets the capabilities of the preview: `file`, `channels`, and `clock`.
+
+The ztk programs of the targets are in `lib/ztk/runtime/TARGET/` next to the `bin` folder of dockyard. `zig build` makes the program of the target of the build. `zig build -Druntimes=all` makes the programs of all the targets, and `-Druntimes=x86_64-linux,x86_64-windows` makes a list of them.
+
+These limits come from the builds of ztk on another system:
+
+- A Linux program for another target has the direct and the headless backends, with no Wayland window.
+- A macOS program made on Linux or Windows has only the headless backend. The AppKit backend needs the macOS SDK, so build dockyard on a Mac for a macOS window.
 
 ## The app list
 
-The app list is not in dockyard yet. [docs/dev/status.md](dev/status.md) has its state.
+Click Apps. The app list shows each folder next to the project folder that has a `main.tcl` (for example, each app in `~/dockyard/`). Below each app, the list shows its programs in `build/`, with the target and the size.
+
+- Launch starts the selected program.
+- Open in dockyard starts a new dockyard window for the selected app.
+
+The list fills again after each build.
