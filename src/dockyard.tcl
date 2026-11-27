@@ -8,52 +8,7 @@
 
 namespace eval ::dockyard {}
 
-wm title . "dockyard: [file tail $::dockyard::project]"
-wm geometry . 1280x800
-image create photo ::dockyard::icon -data $::dockyard::icon64
-wm iconphoto . -default ::dockyard::icon
-image create photo ::dockyard::logo -data $::dockyard::icon20
-
-frame .bar -padx 8 -pady 6
-ttk::label .bar.logo -image ::dockyard::logo -padding {0 0 6 0}
-label .bar.name -text "dockyard" -font {TkDefaultFont 13 bold}
-label .bar.project -text $::dockyard::project
-button .bar.build -text "Build" -command ::dockyard::build::start
-button .bar.apps -text "Apps" -command ::dockyard::apps::show
-label .bar.state -text ""
-pack .bar.logo .bar.name -side left
-pack .bar.project -side left -padx 12
-pack .bar.apps .bar.build -side right -padx {6 0}
-if {[info exists ::dockyard::sandbox] && $::dockyard::sandbox ne ""} {
-    button .bar.shares -text "Shares" -command ::dockyard::vm::shares
-    pack .bar.shares -side right -padx {6 0}
-}
-
-ztk::terminal .term -width 100 -height 36 -cwd / \
-    -exitcommand ::dockyard::ended
-frame .preview -padx 8 -pady 6
-frame .preview.head
-label .preview.head.state -text ""
-button .preview.head.restart -text "Restart" -command ::dockyard::preview::restart
-pack .preview.head.restart -side right
-pack .preview.head.state -side left
-# The image of the preview child fills .preview.box. The box keeps its
-# size from the grid, so the size of the image does not change it.
-frame .preview.box -width 480 -height 480
-pack propagate .preview.box 0
-ttk::label .preview.box.img -anchor nw -padding 0
-place .preview.box.img -x 0 -y 0 -relwidth 1 -relheight 1
-ztk::terminal .preview.log -width 60 -height 8 -cwd /
-pack .preview.head -fill x -pady {0 6}
-pack .preview.log -side bottom -fill x -pady {6 0}
-pack .preview.box -fill both -expand 1
-
-grid .bar -row 0 -column 0 -columnspan 2 -sticky ew
-grid .term -row 1 -column 0 -sticky nsew
-grid .preview -row 1 -column 1 -sticky nsew
-grid columnconfigure . 0 -weight 3
-grid columnconfigure . 1 -weight 2
-grid rowconfigure . 1 -weight 1
+# The layout of the window is in ui.tcl, which runs before this file.
 
 # Starts the agent program, or a shell with the install advice.
 proc ::dockyard::start {} {
@@ -81,10 +36,14 @@ proc ::dockyard::start {} {
     }
     .term configure -inputcommand {} -command {}
     .term configure -command $cmd
+    ::dockyard::ui::paneState agent working
+    ::dockyard::ui::status agent bolt accent "Agent: running" accent
 }
 
 # The program ended. Return starts it again.
 proc ::dockyard::ended {status} {
+    ::dockyard::ui::paneState agent ended
+    ::dockyard::ui::status agent bolt muted "Agent: ended ($status)"
     .term write "\r\n\x1b\[2m\[the program ended: $status. Press Return to start it again.\]\x1b\[0m\r\n"
     .term configure -inputcommand ::dockyard::restartKey
 }
@@ -115,17 +74,13 @@ namespace eval ::dockyard::preview {
     variable tries 0
 }
 
-proc ::dockyard::preview::state {text} {
-    .preview.head.state configure -text $text
-}
-
 proc ::dockyard::preview::restart {} {
     variable run
     incr run
     .preview.log configure -command {} -exitcommand {}
     .preview.log write "\x1b\[2J\x1b\[3J\x1b\[H"
     if {![file exists /main.tcl]} {
-        state "The project has no main.tcl yet."
+        state "The project has no main.tcl yet." idle
         return
     }
     variable frames -1
@@ -133,7 +88,7 @@ proc ::dockyard::preview::restart {} {
     set cmd [list $::dockyard::runner --run [file join $::dockyard::project main.tcl] --headless]
     if {$::dockyard::dark} {lappend cmd --dark}
     .preview.log configure -exitcommand [list ::dockyard::preview::ended $run] -command $cmd
-    state "Run $run of main.tcl"
+    state "Run $run of main.tcl" running
 }
 
 # The child of run `n` ended. An older run is ignored. Status 75 is the
@@ -145,7 +100,7 @@ proc ::dockyard::preview::ended {n status} {
         after 0 ::dockyard::preview::restart
         return
     }
-    state "Run $run of main.tcl ended: $status"
+    state "Run $run of main.tcl ended: $status" [expr {$status eq "exit 0" ? "ended" : "error"}]
 }
 
 proc ::dockyard::preview::poll {} {
@@ -155,6 +110,7 @@ proc ::dockyard::preview::poll {} {
     foreach change [ztcl::watch changes $watch] {
         set path [lindex $change 1]
         if {$path eq "/.git" || [string match /.git/* $path]} continue
+        if {$path eq "/.dockyard" || [string match /.dockyard/* $path]} continue
         if {[info exists ::dockyard::sandbox] && $::dockyard::sandbox ne ""} {::dockyard::vm::fileChange $change}
         set changed 1
     }
@@ -218,6 +174,8 @@ proc ::dockyard::preview::show {} {
         if {$n != $frames || $wrong} {
             image create photo ::dockyard::preview::shot -data [call {ztk::snapshot .} 2000]
             .preview.box.img configure -image ::dockyard::preview::shot
+            .preview.devbar.s configure -text "[image width ::dockyard::preview::shot] × [image height ::dockyard::preview::shot]"
+            if {$frames < 0 && ![catch {call {wm title .}} t] && $t ne ""} {.preview.devbar.t configure -text $t}
             set frames $n
         }
     }]} {
@@ -238,138 +196,6 @@ bind .preview.box.img <ButtonRelease> {::dockyard::preview::send release %b %x %
 bind .preview.box.img <MouseWheel> {::dockyard::preview::send wheel %x %y %D}
 bind .preview.box.img <KeyPress> {::dockyard::preview::send key %K press -state %s}
 bind .preview.box.img <KeyRelease> {::dockyard::preview::send key %K release -state %s}
-
-# The Build button. One check button for each target of `ztk bundle`.
-# A target with no ztk program next to dockyard is off, with the build
-# flag that adds it. The host target is on by default.
-namespace eval ::dockyard::build {}
-
-proc ::dockyard::build::setup {} {
-    set host [::dockyard::build::host]
-    set i 0
-    foreach {target ok} [::dockyard::build::targets] {
-        set w .bar.t$i
-        checkbutton $w -text $target -variable ::dockyard::build::on($target)
-        if {!$ok} {
-            $w configure -state disabled
-        } elseif {$target eq $host} {
-            set ::dockyard::build::on($target) 1
-        }
-        pack $w -side right
-        incr i
-    }
-    pack .bar.state -side right -padx 12
-}
-
-# Builds the program of each selected target into build/TARGET/ of the
-# project, and shows the result in the bar and in the app list.
-proc ::dockyard::build::start {} {
-    variable on
-    if {![file exists /main.tcl]} {
-        .bar.state configure -text "The project has no main.tcl yet."
-        return
-    }
-    set done {}
-    set failed {}
-    foreach {target ok} [::dockyard::build::targets] {
-        if {!$ok || ![info exists on($target)] || !$on($target)} continue
-        .bar.state configure -text "Building $target"
-        update idletasks
-        if {[catch {::dockyard::build::run $target} res]} {
-            lappend failed $target
-            .preview.log write "Build of $target: $res\r\n"
-        } else {
-            lappend done $target
-        }
-    }
-    if {$done eq "" && $failed eq ""} {
-        .bar.state configure -text "Select a target."
-    } elseif {$failed eq ""} {
-        .bar.state configure -text "Built: [join $done {, }]"
-    } else {
-        .bar.state configure -text "Failed: [join $failed {, }]"
-    }
-    ::dockyard::apps::fill
-}
-
-# The app list: the apps next to the project, each with its programs.
-# Launch starts the selected program. Open starts dockyard for the app.
-namespace eval ::dockyard::apps {
-    variable rows {}
-}
-
-proc ::dockyard::apps::show {} {
-    if {![winfo exists .apps]} {
-        toplevel .apps
-        wm title .apps "dockyard: apps"
-        listbox .apps.list -width 70 -height 16
-        frame .apps.buttons
-        button .apps.buttons.launch -text "Launch" -command ::dockyard::apps::launch
-        button .apps.buttons.open -text "Open in dockyard" -command ::dockyard::apps::openApp
-        label .apps.buttons.state -text ""
-        pack .apps.buttons.launch .apps.buttons.open -side left -padx {0 6}
-        pack .apps.buttons.state -side left -padx 6
-        pack .apps.buttons -side bottom -fill x -padx 8 -pady 8
-        pack .apps.list -fill both -expand 1 -padx 8 -pady {8 0}
-    }
-    fill
-}
-
-# Fills the list: a row for each app, and a row for each program of it.
-proc ::dockyard::apps::fill {} {
-    variable rows
-    if {![winfo exists .apps]} return
-    .apps.list delete 0 end
-    set rows {}
-    if {[catch {::dockyard::apps::scan} apps]} {
-        .apps.buttons.state configure -text $apps
-        return
-    }
-    foreach app $apps {
-        lassign $app name path builds
-        .apps.list insert end $name
-        lappend rows [list app $path]
-        foreach b $builds {
-            lassign $b target file size
-            .apps.list insert end [format "    %-16s %s KB" $target [expr {($size + 1023) / 1024}]]
-            lappend rows [list program $file $path]
-        }
-    }
-}
-
-proc ::dockyard::apps::selected {} {
-    variable rows
-    set i [.apps.list curselection]
-    if {$i eq ""} {return {}}
-    return [lindex $rows $i]
-}
-
-proc ::dockyard::apps::launch {} {
-    set row [selected]
-    if {[lindex $row 0] ne "program"} {
-        .apps.buttons.state configure -text "Select a program."
-        return
-    }
-    if {[catch {::dockyard::apps::spawn [lindex $row 1]} err]} {
-        .apps.buttons.state configure -text $err
-    } else {
-        .apps.buttons.state configure -text "Started [file tail [lindex $row 1]]"
-    }
-}
-
-proc ::dockyard::apps::openApp {} {
-    set row [selected]
-    if {$row eq ""} {
-        .apps.buttons.state configure -text "Select an app."
-        return
-    }
-    set path [lindex $row end]
-    if {[catch {::dockyard::apps::spawn $::dockyard::runner $path} err]} {
-        .apps.buttons.state configure -text $err
-    } else {
-        .apps.buttons.state configure -text "Opened [file tail $path]"
-    }
-}
 
 ::dockyard::build::setup
 ::dockyard::bridgeFiles

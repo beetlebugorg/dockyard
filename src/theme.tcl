@@ -40,7 +40,10 @@ proc ::ui::color {name} {
 proc ::ui::icon {name tone} {
     set img ::ui::icon-$name-$tone
     if {[lsearch -exact [image names] $img] < 0} {
-        image create photo $img -data [dict get $::dockyard::ui::icondata [list $name $tone [scheme] 16]]
+        set key [list $name $tone [scheme] 16]
+        # A tone that tools/ui-icons.py does not make gives the muted tone.
+        if {![dict exists $::dockyard::ui::icondata $key]} {set key [list $name muted [scheme] 16]}
+        image create photo $img -data [dict get $::dockyard::ui::icondata $key]
     }
     return $img
 }
@@ -64,7 +67,7 @@ proc ::ui::stylesheet {} {
         Frame.deviceapp { background: var(--d-surface); border-radius: 0 0 10px 10px; }
         Frame.popover { background: var(--d-surface); border: 1px solid var(--d-border); border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,0.28); }
         Frame.plain { background: var(--d-surface); }
-        Checkbutton, Radiobutton { background: transparent; }
+        Checkbutton { background: transparent; }
         Frame.row { background: var(--d-surface); border-radius: 6px; }
         Frame.row:hover { background: var(--d-sunken); }
         Frame.selected { background: var(--d-accentbg); border-radius: 6px; }

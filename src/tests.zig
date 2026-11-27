@@ -65,7 +65,7 @@ test {
     _ = @import("sock.zig");
 }
 
-const window_script = @embedFile("icon.tcl") ++ @embedFile("dockyard.tcl");
+const window_script = @embedFile("icon.tcl") ++ @embedFile("ui-icons.tcl") ++ @embedFile("theme.tcl") ++ @embedFile("ui.tcl") ++ @embedFile("dockyard.tcl");
 
 const Run = struct {
     it: ztcl.Interp = undefined,
@@ -250,10 +250,10 @@ test "the preview runs main.tcl and starts it again after a change" {
     try r.start(test_shell, "puts preview-[expr {20 + 1}]\n");
     defer r.stop();
     try r.waitIn(".preview.log", "preview-21");
-    try std.testing.expect(std.mem.startsWith(u8, try r.eval(".preview.head.state cget -text"), "Run 1 of main.tcl"));
+    try std.testing.expect(std.mem.startsWith(u8, try r.eval("set ::dockyard::preview::status"), "Run 1 of main.tcl"));
     _ = try r.eval("set f [open /main.tcl w]; puts $f {puts preview-[expr {20 + 2}]}; close $f");
     try r.waitIn(".preview.log", "preview-22");
-    try std.testing.expect(std.mem.startsWith(u8, try r.eval(".preview.head.state cget -text"), "Run 2 of main.tcl"));
+    try std.testing.expect(std.mem.startsWith(u8, try r.eval("set ::dockyard::preview::status"), "Run 2 of main.tcl"));
 }
 
 test "the preview shows an error of main.tcl" {
@@ -262,7 +262,7 @@ test "the preview shows an error of main.tcl" {
     defer r.stop();
     try r.waitIn(".preview.log", "invalid command name \"no-such-command\"");
     // The child keeps running, and the bridge gives the error with its trace.
-    try std.testing.expectEqualStrings("Run 1 of main.tcl", try r.eval(".preview.head.state cget -text"));
+    try std.testing.expectEqualStrings("Run 1 of main.tcl", try r.eval("set ::dockyard::preview::status"));
     const errors = try r.tool("errors", "{}");
     try std.testing.expect(std.mem.indexOf(u8, errors, "no-such-command 1 2") != null);
 }
@@ -271,7 +271,7 @@ test "a project with no main.tcl gives a note" {
     var r: Run = .{ .arena = .init(std.testing.allocator) };
     try r.start(test_shell, null);
     defer r.stop();
-    try std.testing.expectEqualStrings("The project has no main.tcl yet.", try r.eval(".preview.head.state cget -text"));
+    try std.testing.expectEqualStrings("The project has no main.tcl yet.", try r.eval("set ::dockyard::preview::status"));
 }
 
 test "the window writes .mcp.json and CLAUDE.md into the project" {
@@ -319,10 +319,10 @@ test "the bridge drives the preview" {
     // The restart tool ends the child with status 75, and the window starts a new run.
     try has(try r.tool("restart", "{}"), "(empty result)");
     var k: usize = 0;
-    while (k < 250 and std.mem.indexOf(u8, try r.eval(".preview.head.state cget -text"), "Run 2") == null) : (k += 1) {
+    while (k < 250 and std.mem.indexOf(u8, try r.eval("set ::dockyard::preview::status"), "Run 2") == null) : (k += 1) {
         _ = try r.eval("after 20 {set ::tick 1}; vwait ::tick");
     }
-    try std.testing.expectEqualStrings("Run 2 of main.tcl", try r.eval(".preview.head.state cget -text"));
+    try std.testing.expectEqualStrings("Run 2 of main.tcl", try r.eval("set ::dockyard::preview::status"));
 }
 
 extern "c" fn execve(path: [*:0]const u8, argv: [*:null]const ?[*:0]const u8, envp: [*:null]const ?[*:0]const u8) c_int;
@@ -423,7 +423,7 @@ test "the Build button makes the program of this computer, and the app list show
     defer r.stop();
     try std.testing.expectEqualStrings("1", try r.eval("set ::dockyard::build::on([::dockyard::build::host])"));
     _ = try r.eval("::dockyard::build::start");
-    const state = try r.eval(".bar.state cget -text");
+    const state = try r.eval("set ::dockyard::build::status");
     try std.testing.expect(std.mem.startsWith(u8, state, "Built: "));
     const a = r.arena.allocator();
     const folder = r.dir;
