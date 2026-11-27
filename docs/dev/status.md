@@ -49,5 +49,5 @@ This page has the state of each step of the build order (section 9 of `spec.md`)
 
 - The preview child has `file`, `channels` (for `source`), and `clock`, with the project folder as the root folder (`src/host.zig`).
 - The tests run the installed `dockyard` program as the preview child (`DOCKYARD_EXE` in `build.zig`), in a new folder `/tmp/dockyard-test-*` for each test.
-- The ztk programs of other targets come from a build on another system. A Linux program of another target has the direct and the headless backends (musl, static). A macOS program made off a Mac has only the headless backend, because the AppKit backend links the macOS SDK. A Windows program has the Win32 backend from any system.
+- The ztk programs of other targets have the full GUI backends of the target when they come from `zig build runtimes` in a source build of ztk (ztk PR 295): Wayland, X11, and Vulkan on Linux, AppKit and Metal on macOS, Win32 on Windows. The release archives and the Homebrew package of ztk do not have them yet, so an installed ztk needs `--runner` for another target.
 - `dockyard::apps::spawn` does not wait for the program, so an ended program stays a zombie process until dockyard ends.
