@@ -10,14 +10,18 @@ namespace eval ::dockyard {}
 
 wm title . "dockyard: [file tail $::dockyard::project]"
 wm geometry . 1280x800
+image create photo ::dockyard::icon -data $::dockyard::icon64
+wm iconphoto . -default ::dockyard::icon
+image create photo ::dockyard::logo -data $::dockyard::icon20
 
 frame .bar -padx 8 -pady 6
+ttk::label .bar.logo -image ::dockyard::logo -padding {0 0 6 0}
 label .bar.name -text "dockyard" -font {TkDefaultFont 13 bold}
 label .bar.project -text $::dockyard::project
 button .bar.build -text "Build" -command ::dockyard::build::start
 button .bar.apps -text "Apps" -command ::dockyard::apps::show
 label .bar.state -text ""
-pack .bar.name -side left
+pack .bar.logo .bar.name -side left
 pack .bar.project -side left -padx 12
 pack .bar.apps .bar.build -side right -padx {6 0}
 if {[info exists ::dockyard::sandbox] && $::dockyard::sandbox ne ""} {

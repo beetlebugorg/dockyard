@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=dockyard
+Comment=Build desktop apps by chatting with Claude Code
+Exec=dockyard %f
+Icon=dockyard
+Terminal=false
+Categories=Development;IDE;

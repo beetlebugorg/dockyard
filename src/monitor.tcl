@@ -73,6 +73,7 @@ proc ::dockyard::monitor::gui {} {
     variable shown
     wm title . "dockyard monitor: [file tail $::dockyard::project]"
     wm geometry . 1000x640
+    wm iconphoto . -default [image create photo -data $::dockyard::icon64]
     frame .bar -padx 8 -pady 6
     label .bar.l -text "Filter"
     entry .bar.filter -textvariable ::dockyard::monitor::filter -width 30
