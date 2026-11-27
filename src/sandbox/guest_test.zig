@@ -197,7 +197,6 @@ test "the guest helper runs a program on a PTY, relays the proxy port, and gives
     // which connects to an allowed server.
     const p = try proxy.Proxy.start(std.testing.allocator, 0);
     defer p.stop();
-    try p.setAllow(&.{"127.0.0.1"});
     const server = c.socket(c.AF.INET, c.SOCK.STREAM | c.SOCK.CLOEXEC, 0);
     defer _ = c.close(server);
     var addr: c.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
@@ -205,6 +204,8 @@ test "the guest helper runs a program on a PTY, relays the proxy port, and gives
     _ = c.listen(server, 4);
     var alen: c.socklen_t = @sizeOf(c.sockaddr.in);
     _ = c.getsockname(server, @ptrCast(&addr), &alen);
+    var pat: [64]u8 = undefined;
+    try p.setAllow(&.{try std.fmt.bufPrint(&pat, "127.0.0.1:{d}", .{std.mem.bigToNative(u16, addr.port)})});
     const echo = try std.Thread.spawn(.{}, echoOnce, .{server});
     // The host side of the relay port: the helper connects to DIR/7101
     // once for each TCP client.

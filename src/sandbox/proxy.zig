@@ -7,8 +7,13 @@
 //! because a program in the sandbox uses `HTTPS_PROXY` and CONNECT.
 //!
 //! An allow list entry is a host name (`api.example.com`) or a suffix
-//! with a star (`*.example.com`, which also matches `example.com`). The
-//! names compare with no case.
+//! with a star (`*.example.com`, which also matches `example.com`), with
+//! an optional port (`api.example.com:8443`). An entry with no port
+//! allows the ports 443 and 80 only. The names compare with no case.
+//!
+//! The limits: at most `max_conns` connections at a time (a connection
+//! over the limit closes at once), `head_timeout_ms` for the request
+//! head, and `idle_timeout_ms` with no bytes in either direction.
 //!
 //! Each connection and each refused request is an event, kept in order
 //! until a call of `events`: the start time in ms, the host, the port,
@@ -46,6 +51,14 @@ pub const Event = struct {
 /// The most events that wait for `events`. Older events go first.
 const max_events = 10_000;
 
+/// The most connections at a time, for each proxy (the guest has one).
+pub const max_conns = 64;
+/// The time for the request head, from the accept.
+pub var head_timeout_ms: i64 = 10_000;
+/// The time with no bytes in either direction, after which the
+/// connection closes.
+pub var idle_timeout_ms: i64 = 300_000;
+
 /// A lock for a short time: the allow list and the events.
 const Lock = struct {
     m: std.atomic.Mutex = .unlocked,
@@ -65,6 +78,8 @@ pub const Proxy = struct {
     allow_list: std.ArrayList([]const u8) = .empty,
     events: std.ArrayList(Event) = .empty,
     stopping: std.atomic.Value(bool) = .init(false),
+    /// The connections that a thread serves now.
+    active: std.atomic.Value(u32) = .init(0),
     thread: ?std.Thread = null,
 
     /// Listens on 127.0.0.1:`port` (0 for a free port) and starts the
@@ -83,11 +98,13 @@ pub const Proxy = struct {
         return p;
     }
 
-    /// Stops the accept thread and frees the proxy. Open connections
-    /// end on their own.
+    /// Stops the accept thread, waits for the end of each connection
+    /// (each one ends in at most `accept_wait_ms` once `stopping` is
+    /// set), and frees the proxy.
     pub fn stop(p: *Proxy) void {
         p.stopping.store(true, .release);
         if (p.thread) |t| t.join();
+        while (p.active.load(.acquire) > 0) std.Thread.yield() catch {};
         sys.close(p.fd);
         p.setAllow(&.{}) catch {};
         p.allow_list.deinit(p.gpa);
@@ -105,10 +122,10 @@ pub const Proxy = struct {
         for (hosts) |h| try p.allow_list.append(p.gpa, try std.ascii.allocLowerString(p.gpa, h));
     }
 
-    fn allowed(p: *Proxy, host: []const u8) bool {
+    fn allowed(p: *Proxy, host: []const u8, port: u16) bool {
         p.lock.lock();
         defer p.lock.unlock();
-        for (p.allow_list.items) |pat| if (matches(pat, host)) return true;
+        for (p.allow_list.items) |pat| if (matchesPort(pat, host, port)) return true;
         return false;
     }
 
@@ -125,7 +142,23 @@ pub const Proxy = struct {
     /// Serves one connection that the caller opened, such as a vsock
     /// stream of the guest, in a thread of its own. The proxy closes it.
     pub fn attach(p: *Proxy, conn: Fd) !void {
-        const t = try std.Thread.spawn(.{}, serve, .{ p, conn });
+        p.spawn(conn);
+    }
+
+    /// Serves `conn` in a thread of its own, or closes it when
+    /// `max_conns` connections are open.
+    fn spawn(p: *Proxy, conn: Fd) void {
+        if (p.active.fetchAdd(1, .acq_rel) >= max_conns) {
+            _ = p.active.fetchSub(1, .acq_rel);
+            sys.close(conn);
+            p.record(.{ .start_ms = nowMs(), .host = "", .port = 0, .result = .refused });
+            return;
+        }
+        const t = std.Thread.spawn(.{}, serveCounted, .{ p, conn }) catch {
+            _ = p.active.fetchSub(1, .acq_rel);
+            sys.close(conn);
+            return;
+        };
         t.detach();
     }
 
@@ -145,7 +178,18 @@ fn loopback(port: u16) sys.Addr {
     return a;
 }
 
-/// True when the host matches the allow list entry `pat` (lower case).
+/// True when `host:port` matches the allow list entry `pat` (lower
+/// case): a host pattern with `:PORT`, or a host pattern alone for the
+/// ports 443 and 80.
+pub fn matchesPort(pat: []const u8, host: []const u8, port: u16) bool {
+    if (std.mem.lastIndexOfScalar(u8, pat, ':')) |colon| {
+        const want = std.fmt.parseInt(u16, pat[colon + 1 ..], 10) catch return false;
+        return want == port and matches(pat[0..colon], host);
+    }
+    return (port == 443 or port == 80) and matches(pat, host);
+}
+
+/// True when the host matches the host pattern `pat` (lower case).
 pub fn matches(pat: []const u8, host: []const u8) bool {
     if (std.mem.startsWith(u8, pat, "*.")) {
         const base = pat[2..];
@@ -182,11 +226,7 @@ fn acceptLoop(p: *Proxy) void {
         if (!want[0].can_read) continue;
         const conn = (sys.accept(p.fd) orelse continue).fd;
         sys.setBlocking(conn, true);
-        const t = std.Thread.spawn(.{}, serve, .{ p, conn }) catch {
-            sys.close(conn);
-            continue;
-        };
-        t.detach();
+        p.spawn(conn);
     }
 }
 
@@ -203,6 +243,19 @@ fn writeAll(fd: Fd, bytes: []const u8) bool {
         }
     }
     return true;
+}
+
+/// A read of some bytes before the wall clock time `deadline` (ms): the
+/// count, 0 at the end, or null on an error or at the deadline.
+fn readBefore(p: *Proxy, fd: Fd, buf: []u8, deadline: i64) ?usize {
+    while (!p.stopping.load(.acquire)) {
+        const left = deadline - nowMs();
+        if (left <= 0) return null;
+        var want = [1]sys.Want{.{ .fd = fd, .read = true }};
+        sys.poll(p.gpa, &want, @intCast(@min(left, accept_wait_ms)));
+        if (want[0].can_read) return readSome(fd, buf);
+    }
+    return null;
 }
 
 /// A read of some bytes: the count, 0 at the end, or null on an error.
@@ -230,14 +283,20 @@ pub fn parseConnect(line: []const u8) ?Target {
     return .{ .host = host, .port = port };
 }
 
+fn serveCounted(p: *Proxy, conn: Fd) void {
+    defer _ = p.active.fetchSub(1, .acq_rel);
+    serve(p, conn);
+}
+
 fn serve(p: *Proxy, conn: Fd) void {
     defer sys.close(conn);
     const t0 = nowMs();
-    // The request head: up to the empty line, 8 KB at most.
+    // The request head: up to the empty line, 8 KB at most, in
+    // head_timeout_ms.
     var buf: [8192]u8 = undefined;
     var len: usize = 0;
     const head_end = while (len < buf.len) {
-        const n = readSome(conn, buf[len..]) orelse return;
+        const n = readBefore(p, conn, buf[len..], t0 + head_timeout_ms) orelse return;
         if (n == 0) return;
         len += n;
         if (std.mem.indexOf(u8, buf[0..len], "\r\n\r\n")) |i| break i + 4;
@@ -248,7 +307,7 @@ fn serve(p: *Proxy, conn: Fd) void {
         p.record(.{ .start_ms = t0, .host = "", .port = 0, .result = .refused });
         return;
     };
-    if (!p.allowed(target.host)) {
+    if (!p.allowed(target.host, target.port)) {
         _ = writeAll(conn, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
         p.record(.{ .start_ms = t0, .host = target.host, .port = target.port, .result = .blocked });
         return;
@@ -267,7 +326,7 @@ fn serve(p: *Proxy, conn: Fd) void {
         if (!writeAll(up, buf[head_end..len])) return;
         sent += len - head_end;
     }
-    relay(p.gpa, conn, up, &sent, &got);
+    relay(p, conn, up, &sent, &got);
     p.record(.{ .start_ms = t0, .host = target.host, .port = target.port, .result = .allowed, .up = sent, .down = got, .ms = nowMs() - t0 });
 }
 
@@ -290,13 +349,20 @@ fn connectTo(gpa: std.mem.Allocator, t: Target) ?Fd {
     return null;
 }
 
-/// Copies bytes both ways until one side ends.
-fn relay(gpa: std.mem.Allocator, client: Fd, host: Fd, sent: *u64, got: *u64) void {
+/// Copies bytes both ways until one side ends, or for idle_timeout_ms
+/// no bytes come.
+fn relay(p: *Proxy, client: Fd, host: Fd, sent: *u64, got: *u64) void {
     var buf: [16384]u8 = undefined;
     const ends = [2]Fd{ client, host };
-    while (true) {
+    var last = nowMs();
+    while (!p.stopping.load(.acquire)) {
         var wants = [2]sys.Want{ .{ .fd = client, .read = true }, .{ .fd = host, .read = true } };
-        sys.poll(gpa, &wants, -1);
+        sys.poll(p.gpa, &wants, accept_wait_ms);
+        if (!wants[0].can_read and !wants[1].can_read) {
+            if (nowMs() - last >= idle_timeout_ms) return;
+            continue;
+        }
+        last = nowMs();
         for (wants, 0..) |w, i| {
             if (!w.can_read) continue;
             const n = readSome(ends[i], &buf) orelse return;
@@ -391,6 +457,12 @@ test "allow list entries match hosts and suffixes" {
     try std.testing.expect(matches("*.example.com", "example.com"));
     try std.testing.expect(matches("*.example.com", "a.b.example.com"));
     try std.testing.expect(!matches("*.example.com", "badexample.com"));
+    try std.testing.expect(matchesPort("api.example.com", "api.example.com", 443));
+    try std.testing.expect(matchesPort("api.example.com", "api.example.com", 80));
+    try std.testing.expect(!matchesPort("api.example.com", "api.example.com", 22));
+    try std.testing.expect(matchesPort("api.example.com:8443", "api.example.com", 8443));
+    try std.testing.expect(!matchesPort("api.example.com:8443", "api.example.com", 443));
+    try std.testing.expect(matchesPort("*.example.com:22", "git.example.com", 22));
 }
 
 test "a CONNECT line gives the host and the port" {
@@ -445,7 +517,8 @@ test "the proxy relays an allowed host and blocks another one" {
     const echo = try std.Thread.spawn(.{}, echoOnce, .{server.fd});
     const p = try Proxy.start(gpa, 0);
     defer p.stop();
-    try p.setAllow(&.{"127.0.0.1"});
+    var pat: [64]u8 = undefined;
+    try p.setAllow(&.{try std.fmt.bufPrint(&pat, "127.0.0.1:{d}", .{server.port})});
     var buf: [256]u8 = undefined;
     const req = try std.fmt.bufPrint(&buf, "CONNECT 127.0.0.1:{d} HTTP/1.1\r\nHost: x\r\n\r\nhello", .{server.port});
     var reply: [256]u8 = undefined;
@@ -483,4 +556,46 @@ test "the proxy relays an allowed host and blocks another one" {
         else => {},
     };
     try std.testing.expect(saw_allowed and saw_blocked);
+}
+
+test "the proxy closes a silent connection and a connection over the limit" {
+    const gpa = std.testing.allocator;
+    const saved = head_timeout_ms;
+    defer head_timeout_ms = saved;
+    head_timeout_ms = 300;
+    const p = try Proxy.start(gpa, 0);
+    defer p.stop();
+    // A host with no port in the allow list allows 443 and 80 only.
+    try p.setAllow(&.{"127.0.0.1"});
+    var reply: [256]u8 = undefined;
+    try std.testing.expect(std.mem.startsWith(u8, try ask(p.port, "CONNECT 127.0.0.1:22 HTTP/1.1\r\n\r\n", &reply), "HTTP/1.1 403"));
+    // max_conns silent clients fill the proxy. The next one closes at
+    // once, and the silent ones close after head_timeout_ms.
+    var fds: [max_conns]Fd = undefined;
+    for (&fds) |*fd| {
+        fd.* = switch (sys.connectTo(loopback(p.port), null, true)) {
+            .fd => |f| f,
+            .err => return error.ConnectionRefused,
+        };
+        sys.setBlocking(fd.*, true);
+    }
+    defer for (fds) |fd| sys.close(fd);
+    const end = nowMs() + 2000;
+    while (p.active.load(.acquire) < max_conns and nowMs() < end) std.Thread.yield() catch {};
+    try std.testing.expectEqual(@as(u32, max_conns), p.active.load(.acquire));
+    const t0 = nowMs();
+    try std.testing.expectEqualStrings("", try ask(p.port, "", &reply));
+    try std.testing.expect(nowMs() - t0 < 250);
+    var one: [1]u8 = undefined;
+    try std.testing.expectEqual(@as(?usize, 0), readSome(fds[0], &one));
+    const evs = try p.take();
+    defer {
+        for (evs) |e| gpa.free(e.host);
+        gpa.free(evs);
+    }
+    var refused: usize = 0;
+    for (evs) |e| if (e.result == .refused) {
+        refused += 1;
+    };
+    try std.testing.expect(refused >= 1);
 }

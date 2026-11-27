@@ -47,6 +47,8 @@ pub const version = 1;
 pub var max_file: u64 = 64 << 20;
 /// The size limit of one line.
 const max_line = 512 * 1024;
+/// The size limit of one list of strings in `data` (`argv`).
+const max_list_bytes = 64 * 1024;
 const header_size = 64;
 const magic = "DYAUDIT1";
 const zero_hash: [64]u8 = @splat('0');
@@ -680,12 +682,22 @@ fn dataOfDict(it: *ztcl.Interp, w: *Line, d: ztcl.Value) ztcl.Error!void {
                 break :blk w.raw(if (t) "true" else "false");
             },
             .strs => blk: {
+                // Up to max_list_bytes of the list: a longer list ends
+                // early, and the field NAME_cut gives the count of the
+                // strings that it leaves out.
+                const elems = try it.list(v);
+                const start = w.buf.items.len;
                 w.raw("[") catch return error.OutOfMemory;
-                for (try it.list(v), 0..) |e, n| {
-                    if (n > 0) w.raw(",") catch return error.OutOfMemory;
+                var kept: usize = 0;
+                for (elems) |e| {
+                    if (w.buf.items.len - start > max_list_bytes) break;
+                    if (kept > 0) w.raw(",") catch return error.OutOfMemory;
                     w.str(try it.str(e), 4096) catch return error.OutOfMemory;
+                    kept += 1;
                 }
-                break :blk w.raw("]");
+                w.raw("]") catch return error.OutOfMemory;
+                if (kept < elems.len) w.print(",\"{s}_cut\":{d}", .{ k, elems.len - kept }) catch return error.OutOfMemory;
+                break :blk {};
             },
             .sdict => blk: {
                 const sub = try it.list(v);
@@ -804,8 +816,15 @@ fn cmdAudit(it: *ztcl.Interp, argv: []const ztcl.Value, _: ?*ztcl.interp.Cmd) zt
             if (!validJson(a, s) or s.len == 0 or s[0] != '{') return it.fail("audit: the data is not a JSON object: {s}", .{s});
             w.raw(s) catch return error.OutOfMemory;
         }
-        const seq = l.append(kind, source, w.buf.items, session, turn, call, time) catch |e|
-            return it.fail("audit: no write to {s}: {s}", .{ the_dir, @errorName(e) });
+        const seq = l.append(kind, source, w.buf.items, session, turn, call, time) catch |e| blk: {
+            // A record over max_line becomes a note with its kind and
+            // size, so the log keeps a record of it.
+            if (e != error.LineTooLong) return it.fail("audit: no write to {s}: {s}", .{ the_dir, @errorName(e) });
+            var n: Line = .{ .a = a };
+            n.print("{{\"text\":\"a record over the size limit\",\"kind\":\"{s}\",\"size\":{d}}}", .{ kind, w.buf.items.len }) catch return error.OutOfMemory;
+            break :blk l.append("note", source, n.buf.items, session, turn, call, time) catch |e2|
+                return it.fail("audit: no write to {s}: {s}", .{ the_dir, @errorName(e2) });
+        };
         return .{ .int = @intCast(seq) };
     }
     if (std.mem.eql(u8, sub, "session")) {
@@ -1004,6 +1023,15 @@ test "the audit log chains, indexes, and filters the records" {
     try std.testing.expect(std.mem.indexOf(u8, line, "\"pid\":7,\"ppid\":1,\"argv\":[\"/bin/ls\",\"-l\"]") != null);
     try std.testing.expect(std.mem.indexOf(u8, line, "\"session\":\"s1\",\"turn\":\"s1.1\",\"call\":null,\"source\":\"helper\"") != null);
     try std.testing.expectEqualStrings("1 6", try T.s(&it, "set v [dockyard::audit verify]; list [dict get $v ok] [dict get $v records]"));
+    // A newline in argv is escaped, a long argv is cut with a count, and a
+    // record over the line limit becomes a note.
+    _ = try it.eval("dockyard::audit log exec [list pid 8 ppid 1 argv [list sh -c \"a\\nb\"]] -source helper");
+    try std.testing.expectEqualStrings("sh -c {a\nb}", try T.s(&it, "dict get [lindex [dockyard::audit query -last 1] 0] data argv"));
+    _ = try it.eval("dockyard::audit log exec [list pid 9 ppid 1 argv [lrepeat 200000 xxxxxxxxxx]] -source helper");
+    try std.testing.expectEqualStrings("1", try T.s(&it, "expr {[dict get [lindex [dockyard::audit query -last 1] 0] data argv_cut] > 190000}"));
+    _ = try it.eval("dockyard::audit log note [list text [string repeat y 60000] a [string repeat y 60000] b [string repeat y 60000] c [string repeat y 60000] d [string repeat y 60000] e [string repeat y 60000] f [string repeat y 60000] g [string repeat y 60000] h [string repeat y 60000]]");
+    try std.testing.expectEqualStrings("{a record over the size limit} note", try T.s(&it, "set d [dict get [lindex [dockyard::audit query -last 1] 0] data]; list [dict get $d text] [dict get $d kind]"));
+    try std.testing.expectEqualStrings("1 9", try T.s(&it, "set v [dockyard::audit verify]; list [dict get $v ok] [dict get $v records]"));
     // audit.tcl makes the records of the events of the window, and the
     // terminal view of monitor.tcl gives each record a line.
     try it.allow(@backingInt(ztcl.interp.Capability.event) | @backingInt(ztcl.interp.Capability.clock));
@@ -1023,11 +1051,11 @@ test "the audit log chains, indexes, and filters the records" {
         std.debug.print("{s}\n", .{try it.str(it.result)});
         return e;
     };
-    try std.testing.expectEqualStrings("session turn tool exec net blocked file turn session", try T.s(&it, "lmap r [dockyard::audit query -after 6] {dict get $r kind}"));
-    try std.testing.expectEqualStrings("7", try T.s(&it, "dockyard::audit count -after 6 -turn [dict get [dockyard::audit context] session].1"));
+    try std.testing.expectEqualStrings("session turn tool exec net blocked file turn session", try T.s(&it, "lmap r [dockyard::audit query -after 9] {dict get $r kind}"));
+    try std.testing.expectEqualStrings("7", try T.s(&it, "dockyard::audit count -after 9 -turn [dict get [dockyard::audit context] session].1"));
     _ = try it.eval(@embedFile("../sandbox/monitor.tcl"));
     const r = try T.s(&it,
-        \\set q [dockyard::audit query -after 6]
+        \\set q [dockyard::audit query -after 9]
         \\list [lindex [::dockyard::monitor::describe [lindex $q 4]] 1] [string match "*tool  start Edit  /work/a.tcl" [lindex [::dockyard::monitor::describe [lindex $q 2]] 0]] \
         \\    [string match "*exec  9  /bin/ls" [lindex [::dockyard::monitor::describe [lindex $q 3]] 0]] [string match "*file  write /a.tcl" [lindex [::dockyard::monitor::describe [lindex $q 6]] 0]]
     );

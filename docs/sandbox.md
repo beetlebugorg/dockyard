@@ -30,12 +30,14 @@ The guest has its own kernel on the hypervisor of the host (`ztcl::vm`). It has 
 
 ## The allow list
 
-The proxy accepts `CONNECT host:port` for the hosts of the allow list, and answers 403 for each other host. The default list:
+The proxy accepts `CONNECT host:port` for the hosts of the allow list, and answers 403 for each other host. An entry with no port, such as `api.anthropic.com`, allows the ports 443 and 80 only. An entry with a port, such as `git.example.com:22`, allows that port only. The default list:
 
 - `api.anthropic.com` and `statsig.anthropic.com`, for Claude Code
 - `registry.npmjs.org`, for npm
 
 Each connection and each blocked attempt is an event: the host, the port, the result, the bytes in each direction, and the time. The [monitor](monitor.md) shows them, and its Allow button adds a host to the list.
+
+The proxy serves at most 64 connections at a time and closes the next ones. A connection closes when its request head does not come in 10 s, or when no bytes go in either direction for 5 minutes.
 
 The proxy sees the host names of HTTPS connections, and not the content. The bodies of the requests stay encrypted.
 
