@@ -116,7 +116,7 @@ const Run = struct {
                 try std.fmt.allocPrintSentinel(a, "TEMP={s}", .{t}, 0),
                 try std.fmt.allocPrintSentinel(a, "TMP={s}", .{t}, 0),
             });
-        } else try a.dupe([:0]const u8, &.{ "PATH=" ++ test_path, "HOME=/tmp", "PS1=$ " });
+        } else try a.dupe([:0]const u8, &.{ "PATH=" ++ test_path, try std.fmt.allocPrintSentinel(a, "HOME={s}.home", .{folder}, 0), "PS1=$ " });
         try host.allow(&r.it, folder, env);
         // The folder of the ztk programs has the ztk program of the build,
         // for the target of this computer: a link, or a copy on Windows,
@@ -173,7 +173,7 @@ const Run = struct {
     fn tool(r: *Run, name: []const u8, args: []const u8) ![]const u8 {
         const a = r.arena.allocator();
         const folder = r.dir;
-        const sock = try host.controlPath(a, null, folder);
+        const sock = try host.controlPath(a, testDirs(a, folder), folder);
         const msg = try std.fmt.allocPrint(a, "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{{\"name\":\"{s}\",\"arguments\":{s}}}}}", .{ name, args });
         var k: usize = 0;
         while (true) : (k += 1) {
@@ -216,9 +216,15 @@ fn writeFile(a: std.mem.Allocator, folder: []const u8, name: []const u8, text: [
     try Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = path, .data = text });
 }
 
+/// The folders of the environment of a test run: HOME is FOLDER.home,
+/// as in the environment of `Run.start`.
+fn testDirs(a: std.mem.Allocator, folder: []const u8) host.Dirs {
+    return .{ .home = std.fmt.allocPrint(a, "{s}.home", .{folder}) catch null };
+}
+
 /// Removes a test project with its folders, and its control socket.
 fn removeFolder(a: std.mem.Allocator, folder: []const u8) void {
-    if (host.controlPath(a, null, folder)) |sock| {
+    if (host.controlPath(a, testDirs(a, folder), folder)) |sock| {
         Io.Dir.cwd().deleteFile(std.testing.io, sock) catch {};
     } else |_| {}
     Io.Dir.cwd().deleteTree(std.testing.io, folder) catch {};
@@ -348,13 +354,15 @@ test "dockyard --mcp answers a client on stdin and stdout" {
     var to_child: [2]c_int = undefined;
     var from_child: [2]c_int = undefined;
     if (std.c.pipe(&to_child) != 0 or std.c.pipe(&from_child) != 0) return error.Unexpected;
+    const home = try std.fmt.allocPrintSentinel(a, "HOME={s}.home", .{folder}, 0);
     const pid = std.c.fork();
     if (pid == 0) {
         _ = std.c.dup2(to_child[0], 0);
         _ = std.c.dup2(from_child[1], 1);
         for ([_]c_int{ to_child[0], to_child[1], from_child[0], from_child[1] }) |fd| _ = std.c.close(fd);
         const argv = [_:null]?[*:0]const u8{ exe, "--mcp", folder.ptr };
-        const envp = [_:null]?[*:0]const u8{"PATH=/usr/bin:/bin"};
+        // The same HOME as the window of the test, so the same socket.
+        const envp = [_:null]?[*:0]const u8{ "PATH=/usr/bin:/bin", home.ptr };
         _ = execve(exe, &argv, &envp);
         std.c._exit(127);
     }

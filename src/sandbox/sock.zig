@@ -7,6 +7,11 @@
 //! `recv` and `send` for the data, and `closesocket`. Winsock starts at
 //! the first call. A Windows socket file has no mode: it is in the temp
 //! folder of the user, which other users cannot open.
+//!
+//! On Linux and macOS, `connect` checks that the socket file belongs to
+//! the user and is not a link, so a socket that another user made at the
+//! path gets no request. `privateDir` makes and checks a folder of mode
+//! 0700 for the sockets.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -63,6 +68,10 @@ pub fn bindListen(fd: Fd, path: [:0]const u8) !void {
 
 pub fn connect(fd: Fd, path: [:0]const u8) !void {
     const addr = try addrOf(path);
+    if (comptime !on_win) {
+        const st = statNoFollow(path) orelse return error.ConnectionRefused;
+        if (st.mode & s_ifmt != s_ifsock or st.uid != uid()) return error.NotOwner;
+    }
     const rc = if (comptime on_win) win.connect(fd, &addr, @sizeOf(Addr)) else std.c.connect(fd, @ptrCast(&addr), @sizeOf(Addr));
     if (rc != 0) return error.ConnectionRefused;
 }
@@ -182,4 +191,84 @@ test "a socket at a path answers a connection" {
     var got: [8]u8 = undefined;
     const n = read(conn, &got);
     try std.testing.expectEqualStrings("ping", got[0..@intCast(n)]);
+}
+
+const s_ifmt: u32 = 0o170000;
+const s_ifdir: u32 = 0o040000;
+const s_ifsock: u32 = 0o140000;
+
+pub const Owner = struct { uid: u32, mode: u32 };
+
+/// The user ID of the process (0 on Windows, which has no user IDs here).
+pub fn uid() u32 {
+    if (comptime on_win) return 0;
+    return @intCast(std.c.getuid());
+}
+
+/// The owner and the mode of `path`, without following a link at its
+/// end, or null when it does not exist.
+pub fn statNoFollow(path: [:0]const u8) ?Owner {
+    if (comptime on_win) return null;
+    if (comptime builtin.os.tag == .linux) {
+        const linux = std.os.linux;
+        var sx: linux.Statx = undefined;
+        const rc = linux.statx(linux.AT.FDCWD, path.ptr, linux.AT.SYMLINK_NOFOLLOW, .{ .TYPE = true, .MODE = true, .UID = true }, &sx);
+        if (linux.errno(rc) != .SUCCESS) return null;
+        return .{ .uid = sx.uid, .mode = sx.mode };
+    }
+    var st: std.c.Stat = undefined;
+    if (std.c.fstatat(std.c.AT.FDCWD, path.ptr, &st, std.c.AT.SYMLINK_NOFOLLOW) != 0) return null;
+    return .{ .uid = @intCast(st.uid), .mode = @intCast(st.mode) };
+}
+
+/// Makes the folder `path` and each folder above it that does not exist
+/// (mode 0700), then checks the last one: a folder, not a link, of the
+/// user, with no rights for others. A folder of the user with more rights
+/// gets mode 0700.
+pub fn privateDir(path: [:0]const u8) !void {
+    if (comptime on_win) return;
+    var buf: [1024]u8 = undefined;
+    if (path.len >= buf.len or path.len == 0 or path[0] != '/') return error.BadPath;
+    var i: usize = 1;
+    while (i <= path.len) : (i += 1) {
+        if (i < path.len and path[i] != '/') continue;
+        @memcpy(buf[0..i], path[0..i]);
+        buf[i] = 0;
+        _ = std.c.mkdir(@ptrCast(&buf), 0o700);
+    }
+    const st = statNoFollow(path) orelse return error.NoFolder;
+    if (st.mode & s_ifmt != s_ifdir or st.uid != uid()) return error.NotOwner;
+    if (st.mode & 0o077 != 0) {
+        if (std.c.chmod(path.ptr, 0o700) != 0) return error.NotOwner;
+    }
+}
+
+test "a socket folder is private and a socket of another owner gets no connect" {
+    if (comptime on_win) return error.SkipZigTest;
+    var buf: [256]u8 = undefined;
+    const base = if (std.c.getenv("TMPDIR")) |t| std.mem.sliceTo(t, 0) else "/tmp";
+    const dir = try std.fmt.bufPrintSentinel(&buf, "{s}/dockyard-test-sockdir-{d}/run", .{ base, std.c.getpid() }, 0);
+    try privateDir(dir);
+    try std.testing.expectEqual(@as(u32, 0o700), statNoFollow(dir).?.mode & 0o777);
+    _ = std.c.chmod(dir.ptr, 0o755);
+    try privateDir(dir);
+    try std.testing.expectEqual(@as(u32, 0o700), statNoFollow(dir).?.mode & 0o777);
+    // A link in the place of the folder is refused.
+    var lbuf: [256]u8 = undefined;
+    const link = try std.fmt.bufPrintSentinel(&lbuf, "{s}/dockyard-test-sockdir-{d}/link", .{ base, std.c.getpid() }, 0);
+    _ = std.c.symlink(dir.ptr, link.ptr);
+    try std.testing.expectError(error.NotOwner, privateDir(link));
+    // A plain file at the path of a socket gets no connect.
+    var fbuf: [256]u8 = undefined;
+    const file = try std.fmt.bufPrintSentinel(&fbuf, "{s}/f.sock", .{dir}, 0);
+    const fd = std.c.open(file.ptr, .{ .ACCMODE = .WRONLY, .CREAT = true }, @as(std.c.mode_t, 0o600));
+    _ = std.c.close(fd);
+    const s = try open();
+    defer close(s);
+    try std.testing.expectError(error.NotOwner, connect(s, file));
+    _ = std.c.unlink(file.ptr);
+    _ = std.c.unlink(link.ptr);
+    _ = std.c.rmdir(dir.ptr);
+    var pbuf: [256]u8 = undefined;
+    _ = std.c.rmdir((try std.fmt.bufPrintSentinel(&pbuf, "{s}/dockyard-test-sockdir-{d}", .{ base, std.c.getpid() }, 0)).ptr);
 }

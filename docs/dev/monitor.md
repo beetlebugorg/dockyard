@@ -6,7 +6,7 @@ Date: 2026-11-27. State: first form. The monitor shows what the programs of the 
 
 The monitor shows the audit log of the project: `audit.md` has its schema, its folder, and its commands. The dockyard window writes the records with `src/audit/audit.tcl`. The monitor reads the last 10,000 records at its start, then the new records every 250 ms (`dockyard::audit query -after SEQ`).
 
-The rules file (`dockyard-HASH.rules`) is next to the control socket of the project (`$XDG_RUNTIME_DIR`, or `/tmp` with the user ID), with mode 0600. `dockyard::monitor rule` and `dockyard::monitor rules` (`src/sandbox/monitor.zig`) write and read it.
+The rules file (`dockyard-HASH.rules`) is next to the control socket of the project (`$XDG_RUNTIME_DIR`, or the private folder of `host.controlPath`), with mode 0600. `dockyard::monitor rule` and `dockyard::monitor rules` (`src/sandbox/monitor.zig`) write and read it.
 
 ## The front ends
 
