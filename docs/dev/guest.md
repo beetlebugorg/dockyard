@@ -42,7 +42,7 @@ The first frame is `open`. The program starts in a new session with the PTY as i
 
 ## The proxy port (ports 7101 and 7102)
 
-The helper listens on `127.0.0.1:3128` of the guest. The guest programs get `HTTPS_PROXY=http://127.0.0.1:3128`.
+The helper listens on `127.0.0.1:3128` of the guest. The kernel starts with the loopback device down, so the helper first sets the flag `IFF_UP` of `lo` (the ioctls `SIOCGIFFLAGS` and `SIOCSIFFLAGS` on a socket of `AF_INET`). The guest programs get `HTTPS_PROXY=http://127.0.0.1:3128`.
 
 1. The host keeps one connection on port 7101. For each new TCP client of port 3128, the helper sends the id of the client as `u32`. It sends the ids of waiting clients again after a new control connection.
 2. For each id, the host opens a connection on port 7102 and sends the id as `u32`.

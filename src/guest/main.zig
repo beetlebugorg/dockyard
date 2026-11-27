@@ -9,7 +9,9 @@
 //!   7103  The events: one JSON line for each program that starts or ends.
 //!
 //! The proxy port is 127.0.0.1:3128 of the guest. A guest kernel with no
-//! IPv4 has no proxy port, and the helper writes a line on stderr.
+//! IPv4 has no proxy port, and the helper writes a line on stderr. The
+//! kernel starts with the loopback device down, so the helper sets the
+//! flag IFF_UP of `lo` (SIOCGIFFLAGS, then SIOCSIFFLAGS) before it binds.
 //!
 //! The helper uses no libc, so one file builds for each architecture:
 //!
@@ -126,8 +128,26 @@ fn listenOn(port: u32) ?i32 {
     return fd;
 }
 
+/// The `struct ifreq` of the kernel: the name, then a union of 24 bytes
+/// with the flags first.
+const Ifreq = extern struct { name: [16]u8 = @splat(0), flags: i16 = 0, pad: [22]u8 = @splat(0) };
+const SIOCGIFFLAGS = 0x8913;
+const SIOCSIFFLAGS = 0x8914;
+const IFF_UP = 0x1;
+
+/// Sets IFF_UP on `lo` through the socket `fd` of AF_INET.
+fn loopbackUp(fd: i32) bool {
+    var ifr: Ifreq = .{};
+    @memcpy(ifr.name[0..2], "lo");
+    _ = ok(linux.ioctl(fd, SIOCGIFFLAGS, @intFromPtr(&ifr))) orelse return false;
+    if (ifr.flags & IFF_UP != 0) return true;
+    ifr.flags |= IFF_UP;
+    return ok(linux.ioctl(fd, SIOCSIFFLAGS, @intFromPtr(&ifr))) != null;
+}
+
 fn listenTcp(port: u16) ?i32 {
     const fd: i32 = @intCast(ok(linux.socket(linux.AF.INET, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0)) orelse return null);
+    if (!loopbackUp(fd)) say("dockyard-guest: no loopback device up\n");
     const one: i32 = 1;
     _ = linux.setsockopt(fd, linux.SOL.SOCKET, linux.SO.REUSEADDR, std.mem.asBytes(&one), 4);
     var addr: SockaddrIn = .{ .port = std.mem.nativeToBig(u16, port), .addr = std.mem.nativeToBig(u32, 0x7f00_0001) };

@@ -229,13 +229,13 @@ const kvm_script =
     \\dockyard::sandbox::events $vm ev
     \\after 200
     \\set s [dockyard::sandbox::session $vm -rows 30 -cols 100 -output out -exit ex]
-    \\dockyard::sandbox::input $s "/bin/busybox stty size; echo héllo; /bin/busybox sleep 0.3; exit 4\n"
+    \\dockyard::sandbox::input $s "/bin/busybox stty size; echo héllo; /bin/busybox ip -o link show lo; /bin/busybox sleep 0.3; exit 4\n"
     \\after 10000 {set ::done timeout}
     \\vwait ::done
     \\set argv {}
     \\foreach e $::events {if {[dict get $e type] eq "exec"} {lappend argv [dict get $e argv]}}
     \\ztcl::vm delete $vm
-    \\list $::done [string match "*30 100*héllo*" $::out] [expr {[list /bin/busybox sleep 0.3] in $argv}]
+    \\list $::done [string match "*30 100*héllo*LOOPBACK,UP*" $::out] [expr {[list /bin/busybox sleep 0.3] in $argv}]
 ;
 
 test "the terminal of the sandbox runs on a PTY of a guest over vsock" {
