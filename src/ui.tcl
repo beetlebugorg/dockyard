@@ -394,7 +394,7 @@ proc ::dockyard::build::start {} {
         ::dockyard::ui::status build error danger "Build failed: [join [lmap t $failed {targetName $t}] {, }]" danger
         ::dockyard::ui::toggleConsole 1
     }
-    catch {::dockyard::activity::note build [list status $status]}
+    catch {::dockyard::audit::Log build [list op end targets [concat $done $failed] ok [expr {$failed eq ""}]] -source app}
     ::dockyard::apps::fill
 }
 
