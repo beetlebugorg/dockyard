@@ -227,15 +227,19 @@ const kvm_script =
     \\proc ex {code} {set ::done $code}
     \\proc ev {d} {lappend ::events $d}
     \\dockyard::sandbox::events $vm ev
+    \\dockyard::proxy start
+    \\dockyard::proxy allow {}
+    \\dockyard::sandbox::relay $vm
     \\after 200
     \\set s [dockyard::sandbox::session $vm -rows 30 -cols 100 -output out -exit ex]
-    \\dockyard::sandbox::input $s "/bin/busybox stty size; echo héllo; /bin/busybox ip -o link show lo; /bin/busybox sleep 0.3; exit 4\n"
+    \\dockyard::sandbox::input $s "/bin/busybox stty size; echo héllo; /bin/busybox ip -o link show lo; printf 'CONNECT blocked.invalid:443 HTTP/1.1\\r\\n\\r\\n' | /bin/busybox nc 127.0.0.1 3128; /bin/busybox sleep 0.3; exit 4\n"
     \\after 10000 {set ::done timeout}
     \\vwait ::done
     \\set argv {}
     \\foreach e $::events {if {[dict get $e type] eq "exec"} {lappend argv [dict get $e argv]}}
     \\ztcl::vm delete $vm
-    \\list $::done [string match "*30 100*héllo*LOOPBACK,UP*" $::out] [expr {[list /bin/busybox sleep 0.3] in $argv}]
+    \\dockyard::proxy stop
+    \\list $::done [string match "*30 100*héllo*LOOPBACK,UP*HTTP/1.1 403*" $::out] [expr {[list /bin/busybox sleep 0.3] in $argv}]
 ;
 
 test "the terminal of the sandbox runs on a PTY of a guest over vsock" {
@@ -261,6 +265,7 @@ test "the terminal of the sandbox runs on a PTY of a guest over vsock" {
     try ztcl.fsroot.setRoot(&it, dir);
     it.event_host = .{ .now = ticks, .sleep = hostSleep };
     _ = it.eval(sandbox.script) catch return error.TclError;
+    try proxy.register(&it);
     const res = it.eval(kvm_script) catch {
         std.debug.print("{s}\n", .{it.str(it.result) catch "error"});
         return error.TclError;
