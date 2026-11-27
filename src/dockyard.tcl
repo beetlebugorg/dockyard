@@ -103,6 +103,7 @@ namespace eval ::dockyard::preview {
     variable run 0
     variable pending ""
     variable watch ""
+    variable tries 0
 }
 
 proc ::dockyard::preview::state {text} {
@@ -189,14 +190,22 @@ proc ::dockyard::preview::show {} {
     variable frames
     variable size
     variable sent
+    variable tries
     set delay 33
     if {[catch {
         if {$size ne "" && $size ne $sent} {
             call [list wm geometry . $size]
             set sent $size
+            set tries 30
         }
         set n [call ::dockyard::bridge::frames]
-        if {$n != $frames} {
+        # The child can draw its next frame before the new size is in
+        # its layout. So the pane also reads the image again while its
+        # size is not the size that the pane sent, 30 times at most.
+        set wrong [expr {$sent ne "" && $tries > 0 && [lsearch [image names] ::dockyard::preview::shot] >= 0 &&
+            "[image width ::dockyard::preview::shot]x[image height ::dockyard::preview::shot]" ne $sent}]
+        if {$wrong} {incr tries -1}
+        if {$n != $frames || $wrong} {
             image create photo ::dockyard::preview::shot -data [call {ztk::snapshot .} 2000]
             .preview.box.img configure -image ::dockyard::preview::shot
             set frames $n
