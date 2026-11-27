@@ -21,16 +21,6 @@ proc ::dockyard::ui::folder {} {
     return $p
 }
 
-# The folder for the header: a long path shows its last two folders.
-proc ::dockyard::ui::shortFolder {} {
-    set p [folder]
-    set parts [file split $p]
-    if {[string length $p] > 40 && [llength $parts] > 2} {
-        set p [file join ... {*}[lrange $parts end-1 end]]
-    }
-    return $p
-}
-
 wm title . "[file tail $::dockyard::project] - dockyard"
 wm geometry . 1280x800
 wm minsize . 760 480
@@ -38,8 +28,7 @@ image create photo ::dockyard::icon -data $::dockyard::icon64
 wm iconphoto . -default ::dockyard::icon
 . configure -background [::ui::color bg]
 
-::ui::header .hd [file tail $::dockyard::project] [::dockyard::ui::shortFolder] workspace
-ztk::tooltip .hd.folder $::dockyard::project
+::ui::header .hd [file tail $::dockyard::project] [::dockyard::ui::folder] workspace
 .hd.project configure -command ::dockyard::ui::projectMenu
 .hd.build configure -command ::dockyard::build::start
 .hd.targets configure -command ::dockyard::build::picker

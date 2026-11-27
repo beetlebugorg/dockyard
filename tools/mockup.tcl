@@ -167,7 +167,7 @@ wm geometry . 1280x800
 . configure -background [ui::color bg]
 
 # The header: the logo, the project, the views, and Build.
-ui::header .hd tip-calculator "~/Projects/tip-calculator" [expr {$view in {apps activity} ? $view : "workspace"}]
+ui::header .hd tip-calculator "~/Projects/apps/with/a/long/folder/name/for/the/wrap/test/tip-calculator" [expr {$view in {apps activity} ? $view : "workspace"}]
 grid .hd -row 0 -column 0 -sticky ew
 
 proc agentPane {w state} {

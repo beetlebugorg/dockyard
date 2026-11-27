@@ -137,16 +137,29 @@ proc ::ui::iconButton {w name tip {tone muted}} {
 # The header: the logo, the project button with its folder, the view
 # switch, and the split Build button.
 proc ::ui::header {w name folder view} {
-    frame $w -padx 12 -pady 8
+    frame $w -padx 12 -pady 6
     ztk::class $w add header
+    # Three columns: the project on the left, the view switch in the
+    # center, and Build on the right. The side columns have one width,
+    # so the switch stays in the center. The full folder wraps in the
+    # width of the left column.
+    foreach f {left proj right} {
+        frame $w.$f
+        ztk::class $w.$f add header
+    }
     ttk::label $w.logo -image ::dockyard::ui::logo
     ttk::button $w.project -text $name -image [icon chevron muted] -compound right -style Project.TButton
-    ztk::tooltip $w.project "Switch the project (Ctrl+O)"
-    label $w.folder -text $folder
+    ztk::tooltip $w.project "Switch the project"
+    label $w.folder -text $folder -justify left -anchor w
     ztk::class $w.folder add faint
+    pack $w.logo -in $w.left -side left -padx {0 8}
+    pack $w.proj -in $w.left -side left -fill x -expand 1
+    pack $w.project -in $w.proj -anchor w
+    pack $w.folder -in $w.proj -anchor w -padx 6
+    bind $w.left <Configure> [list ::ui::wrapFolder $w]
     frame $w.views
     ztk::class $w.views add header
-    foreach {v t i} {workspace Workspace terminal activity Activity activity apps Apps apps} {
+    foreach {v t} {workspace Workspace activity Activity apps Apps} {
         radiobutton $w.views.$v -text $t -variable ::ui::view -value $v -indicatoron 0
         ztk::class $w.views.$v add segmented
         pack $w.views.$v -side left
@@ -155,17 +168,21 @@ proc ::ui::header {w name folder view} {
     ttk::button $w.build -text "Build" -image [icon build white] -compound left -style Accent.TButton
     ztk::tooltip $w.build "Build the selected targets (Ctrl+Shift+B)"
     ttk::button $w.targets -image [icon chevron white] -style AccentEnd.TButton
-    ztk::tooltip $w.targets "Choose the targets"
+    ztk::tooltip $w.targets "Choose the targets (Ctrl+Shift+T)"
     label $w.count -text "2 targets"
     ztk::class $w.count add muted
-    pack $w.logo -side left -padx {0 8}
-    pack $w.project -side left
-    pack $w.folder -side left -padx {4 0}
-    pack $w.targets -side right
-    pack $w.build -side right -padx {0 1}
-    pack $w.count -side right -padx {0 10}
-    place $w.views -relx 0.5 -rely 0.5 -anchor center
+    pack $w.targets -in $w.right -side right
+    pack $w.build -in $w.right -side right -padx {0 1}
+    pack $w.count -in $w.right -side right -padx {0 10}
+    grid $w.left -row 0 -column 0 -sticky ew
+    grid $w.views -row 0 -column 1 -padx 16
+    grid $w.right -row 0 -column 2 -sticky e
+    grid columnconfigure $w {0 2} -weight 1 -uniform side
     return $w
+}
+
+proc ::ui::wrapFolder {w} {
+    $w.folder configure -wraplength [expr {max(120, [winfo width $w.left] - 40)}]
 }
 
 # The head row of a pane: an icon, a title, a detail, a state pill, and
