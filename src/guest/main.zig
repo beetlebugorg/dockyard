@@ -297,30 +297,28 @@ fn relay(c: i32) void {
     splice(c, h);
 }
 
-/// Copies the bytes both ways until both ends are closed.
+/// Copies the bytes both ways between the client `a` and the host `b`.
+/// The end of `b` ends the copy, and the process exits, so both ends
+/// close. The end of `a` stops the reads of `a` only: the answer of the
+/// host still goes to the client. The relay sends no half close to the
+/// host, since the vsock of VZ drops a half close while the host has
+/// unread data. ztcl #512 adds frames for the end of a stream.
 fn splice(a: i32, b: i32) void {
     var buf: [65536]u8 = undefined;
     var open_a = true;
-    var open_b = true;
-    while (open_a or open_b) {
+    while (true) {
         var pf = [2]linux.pollfd{
             .{ .fd = if (open_a) a else -1, .events = linux.POLL.IN, .revents = 0 },
-            .{ .fd = if (open_b) b else -1, .events = linux.POLL.IN, .revents = 0 },
+            .{ .fd = b, .events = linux.POLL.IN, .revents = 0 },
         };
         _ = ok(linux.poll(&pf, 2, -1)) orelse return;
         if (pf[0].revents != 0) {
             const n = ok(linux.read(a, &buf, buf.len)) orelse 0;
-            if (n == 0 or !writeAll(b, buf[0..n])) {
-                open_a = false;
-                _ = linux.shutdown(b, linux.SHUT.WR);
-            }
+            if (n == 0) open_a = false else if (!writeAll(b, buf[0..n])) return;
         }
         if (pf[1].revents != 0) {
             const n = ok(linux.read(b, &buf, buf.len)) orelse 0;
-            if (n == 0 or !writeAll(a, buf[0..n])) {
-                open_b = false;
-                _ = linux.shutdown(a, linux.SHUT.WR);
-            }
+            if (n == 0 or !writeAll(a, buf[0..n])) return;
         }
     }
 }

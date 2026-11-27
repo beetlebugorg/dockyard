@@ -337,7 +337,7 @@ fn cmdProxy(it: *ztcl.Interp, argv: []const ztcl.Value, _: ?*ztcl.interp.Cmd) zt
     }
     if (std.mem.eql(u8, sub, "allow")) {
         if (argv.len > 2) {
-            const items = try it.readList(argv[2]);
+            const items = try it.list(argv[2]);
             var hosts: std.ArrayList([]const u8) = .empty;
             for (items) |v| try hosts.append(a, try it.str(v));
             try p.setAllow(hosts.items);

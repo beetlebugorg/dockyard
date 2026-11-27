@@ -4,7 +4,7 @@
 # (checked by SHA-256) and the guest helper, then makes the squashfs and
 # its dm-verity hash tree in /out. The inputs are in /in.
 set -eu
-arch=$1 zig_sha=$2 salt=$3 comp=${4:-gzip}
+arch=$1 zig_sha=$2 salt=$3 comp=${4:-xz}
 apk add -q squashfs-tools cryptsetup
 mkdir -p /rootfs/etc/apk
 cp -r /etc/apk/keys /rootfs/etc/apk/
@@ -41,10 +41,10 @@ install -m 755 /in/dockyard-guest /rootfs/usr/libexec/dockyard/dockyard-guest
 rm -rf /rootfs/var/cache/apk/* /rootfs/lib/apk/db/scripts.tar* /rootfs/var/log/apk.log \
     /rootfs/usr/share/man /rootfs/usr/share/doc
 rm -f /out/tools.img
-# The compression is gzip by default, since the guest kernel of ztcl has
-# the zlib decompressor of squashfs only. comp=xz makes the disk about 27%
-# smaller, with blocks of 1 MiB and the branch filter of the architecture,
-# for a kernel with CONFIG_SQUASHFS_XZ.
+# The compression is xz by default, with blocks of 1 MiB and the branch
+# filter of the architecture. The guest kernel of ztcl has
+# CONFIG_SQUASHFS_XZ from ztcl-guest-kernel run 46018245215. comp=gzip is
+# for an older kernel with the zlib decompressor only.
 case $comp in
     xz) case $arch in x86_64) opts="-comp xz -Xbcj x86" ;; arm64) opts="-comp xz -Xbcj arm64" ;; esac ;;
     gzip) opts="-comp gzip -Xcompression-level 9" ;;

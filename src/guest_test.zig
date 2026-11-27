@@ -352,7 +352,7 @@ const release_script =
     \\dockyard::sandbox::hooks $vm /root
     \\set s [dockyard::sandbox::session $vm -rows 30 -cols 100 -cwd /work -output out -exit ex \
     \\    -env {TERM=xterm-256color HOME=/root PATH=/bin:/sbin:/usr/bin}]
-    \\dockyard::sandbox::input $s "zig version; node --jitless -e 'console.log(\"n\"+(1+1))'; git --version; /bin/busybox cat hello.txt; /bin/busybox grep -c dockyard-guest /root/.claude/settings.json; echo from-tools > out.txt; exit 5\n"
+    \\dockyard::sandbox::input $s "zig version; node -e 'console.log(\"n\"+(1+1))'; git --version; /bin/busybox cat hello.txt; /bin/busybox grep -c dockyard-guest /root/.claude/settings.json; echo from-tools > out.txt; exit 5\n"
     \\after 20000 {set ::done timeout}
     \\vwait ::done
     \\ztcl::vm delete $vm
@@ -365,9 +365,7 @@ const release_script =
 
 test "the pane runs from the tools disk of a signed release" {
     // KVM on x86-64 Linux. DOCKYARD_GUEST_RELEASE is the output folder of
-    // os/tools/manifest.sh, signed with the test key of dockyard. node
-    // runs with --jitless: its JIT stops with "Check failed: 0 == ret" in
-    // this guest (docs/dev/vm.md).
+    // os/tools/manifest.sh, signed with the test key of dockyard.
     if (comptime !(on_linux and builtin.cpu.arch == .x86_64)) return error.SkipZigTest;
     const src = std.mem.sliceTo(c.getenv("DOCKYARD_GUEST_RELEASE") orelse return error.SkipZigTest, 0);
     if (!hasKvm()) return error.SkipZigTest;
