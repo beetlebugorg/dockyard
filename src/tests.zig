@@ -235,9 +235,6 @@ test "a missing agent program gives a shell and the install advice" {
 }
 
 test "the preview runs main.tcl and starts it again after a change" {
-    // The ztcl of the pin of ztk has ztcl::watch on Linux only. An update
-    // of the pin gives it the watch of Windows (ztcl#257).
-    if (comptime on_win) return error.SkipZigTest;
     var r: Run = .{ .arena = .init(std.testing.allocator) };
     try r.start(test_shell, "puts preview-[expr {20 + 1}]\n");
     defer r.stop();
