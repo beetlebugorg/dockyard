@@ -287,7 +287,7 @@ test "the bridge drives the preview" {
         \\set ::count 0
         \\button .b -text "Add one" -command {incr ::count; puts count=$::count}
         \\entry .e
-        \\pack .b .e -padx 20 -pady 10
+        \\pack .b .e -padx 20 -pady 10 -anchor w
         \\focus .e
         \\
     );
@@ -300,8 +300,10 @@ test "the bridge drives the preview" {
             }
         }
     }.f;
-    try has(try r.tool("widgets", "{}"), ".b Button 80 10 78 31 1 text={Add one}");
-    try has(try r.tool("click", "{\"x\":100,\"y\":20}"), "\"text\":\".b\"");
+    // The widgets are on the left, so the size that the pane gives the
+    // child does not move them.
+    try has(try r.tool("widgets", "{}"), ".b Button 20 10 78 31 1 text={Add one}");
+    try has(try r.tool("click", "{\"x\":40,\"y\":20}"), "\"text\":\".b\"");
     try has(try r.tool("eval", "{\"script\":\"set ::count\"}"), "\"text\":\"1\"");
     try has(try r.tool("log", "{}"), "count=1");
     try has(try r.tool("type", "{\"text\":\"hi [there]\",\"widget\":\".e\"}"), "\"text\":\".e\"");
