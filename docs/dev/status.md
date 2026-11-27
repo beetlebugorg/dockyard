@@ -8,6 +8,7 @@ This page has the state of each step of the build order (section 9 of `spec.md`)
 | PTY | ztcl | Linux merged: ztcl PRs 115 (plan) and 117 (`ztcl::pty`). macOS and Windows (ConPTY) are designed in ztcl `docs/dev/pty.md` and give an error. |
 | `ztk::terminal` | ztk | Merged: ztk PR 80 (ztcl update) and PR 81 (the widget). |
 | App window with the terminal pane | dockyard | Done: `src/main.zig`, `src/host.zig`, `src/dockyard.tcl`. The pane runs `claude` or the shell, and Return starts it again after it ends. |
+| Window design | dockyard | `docs/dev/design.md`. Done: the layout, the target picker, the Apps view, the status bar, the keys (`src/theme.tcl`, `src/ui.tcl`), and the Activity view on the monitor log (`src/activity.tcl`). Not started: the check of signed records (ztcl::meter), the diff of a file change and the output of a command (they wait for the fields in the log), and the Allow dialog with a choice of scope. |
 | File watcher | ztcl | Merged: ztcl PR 120 (plan) and PR 121 (`ztcl::watch` on Linux). |
 | CI | dockyard | Done: `.github/workflows/ci.yml` (dockyard PR 3). Each change to main goes in a PR. |
 | Live preview, first form | ztk, dockyard | Done: ztk PR 93 (ztcl with `ztcl::watch`). The preview pane runs `dockyard --run main.tcl` on a PTY, shows its output, and starts it again 150 ms after the last change outside `.git`. |

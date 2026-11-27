@@ -37,7 +37,7 @@ const audit = @import("audit.zig");
 const monitor_script = @embedFile("monitor.tcl");
 const audit_script = @embedFile("audit.tcl");
 
-const window_script = @embedFile("ui-icons.tcl") ++ @embedFile("theme.tcl") ++ @embedFile("ui.tcl") ++ @embedFile("dockyard.tcl");
+const window_script = @embedFile("ui-icons.tcl") ++ @embedFile("theme.tcl") ++ @embedFile("ui.tcl") ++ @embedFile("activity.tcl") ++ @embedFile("dockyard.tcl");
 /// The icon of the window and the logo of the bar (tools/icons.py).
 const icon_script = @embedFile("icon.tcl");
 
@@ -56,6 +56,7 @@ const usage =
     \\  --exit-after-frames N    exit after N frames
     \\  --exit-after-ms N        exit N ms after the start
     \\  --screenshot FILE.png    with --headless: write the last frame at the exit
+    \\  --view NAME              open the view workspace, activity, or apps
     \\
 ;
 
@@ -108,6 +109,7 @@ pub fn main(init: std.process.Init) !void {
     var max_frames: ?u64 = null;
     var exit_ms: ?u64 = null;
     var screenshot: ?[]const u8 = null;
+    var view: []const u8 = "workspace";
     var agent_flag: ?[]const u8 = null;
     var project: ?[]const u8 = null;
     var run_file: ?[]const u8 = null;
@@ -152,6 +154,9 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, a, "--exit-after-ms") and has_value) {
             i += 1;
             exit_ms = std.fmt.parseInt(u64, args[i], 10) catch fail(err, "dockyard: bad time\n", .{});
+        } else if (std.mem.eql(u8, a, "--view") and has_value) {
+            i += 1;
+            view = args[i];
         } else if (std.mem.eql(u8, a, "--screenshot") and has_value) {
             i += 1;
             screenshot = args[i];
@@ -209,6 +214,7 @@ pub fn main(init: std.process.Init) !void {
             .headless = headless,
             .dark = dark,
         });
+        try it.setVar("::dockyard::view", .{ .str = view });
         const sandbox_abs = if (sandbox_dir) |d| try std.fs.path.resolve(arena, &.{ cwd, d }) else null;
         const release = if (sandbox_abs) |d| if (guest_release.isRelease(arena, io, d)) guest_release.prepare(arena, io, folder, d) catch |e|
             fail(err, "dockyard: the guest release in {s}: {s}\n", .{ d, @errorName(e) }) else null else null;
