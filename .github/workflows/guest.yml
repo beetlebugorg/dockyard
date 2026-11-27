@@ -1,0 +1,84 @@
+name: Guest
+
+# Builds the tools disk of the sandbox guest (os/tools) on a runner of
+# each architecture, then writes the manifest of a guest release with the
+# kernel and the root disk of the latest ztcl test image, signed with the
+# test key of dockyard under the name dockyard-guest-test. The artifact
+# dockyard-guest-test has the release. A release signed with a key of
+# dockyard is a later step.
+on:
+  push:
+    branches: [main]
+    paths: ["os/**", "src/guest/**", ".github/workflows/guest.yml"]
+  pull_request:
+    paths: ["os/**", "src/guest/**", ".github/workflows/guest.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guest-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  ZIG_VERSION: "0.17.0"
+
+jobs:
+  tools:
+    name: Tools disk (${{ matrix.arch }})
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Build the tools disk
+        run: ARCH=${{ matrix.arch }} OUT=out sh os/tools/build.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tools-${{ matrix.arch }}
+          path: out/
+          retention-days: 7
+
+  manifest:
+    name: Manifest (test key)
+    needs: tools
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: tools-*
+          merge-multiple: true
+          path: out/
+      # The kernel and the root disk of the guest of ztcl: the test image
+      # of the latest build of ztcl main.
+      - name: Get the ztcl test image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run=$(gh run list -R beetlebugorg/ztcl --workflow vm-guest.yml --branch main --status success --limit 1 --json databaseId -q '.[0].databaseId')
+          gh run download -R beetlebugorg/ztcl "$run" -n vm-image-test -D ztcl-image
+          echo "ztcl test image of run $run"
+      - name: Write and check the manifest
+        run: |
+          OUT=out ZTCL_IMAGE=ztcl-image sh os/tools/manifest.sh
+          echo "ztcl-vm-image $(cut -d' ' -f1,2 os/tools/testkey/test_ed25519.pub)" > allowed
+          ssh-keygen -Y verify -f allowed -I ztcl-vm-image -n ztcl-vm-image -s out/manifest.json.sig < out/manifest.json
+          rm out/*-tools.json
+          ls -l out
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dockyard-guest-test
+          path: out/
+          retention-days: 30
