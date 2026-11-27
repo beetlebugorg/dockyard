@@ -30,6 +30,9 @@ const control = @import("control.zig");
 const mcp = @import("mcp.zig");
 const apps = @import("apps.zig");
 const proxy = @import("proxy.zig");
+const sandbox = @import("sandbox.zig");
+const monitor = @import("monitor.zig");
+const monitor_script = @embedFile("monitor.tcl");
 
 const window_script = @embedFile("dockyard.tcl");
 
@@ -37,6 +40,10 @@ const usage =
     \\usage: dockyard [flags] [project folder]
     \\  --agent PROGRAM          run PROGRAM in the terminal pane (default: claude from the PATH)
     \\  --run FILE               run the script FILE of a project (the preview child)
+    \\  --sandbox DIR            run the terminal pane in a guest of ztcl::vm with the files of DIR
+    \\  --sandbox-command LIST    the program of the pane in the guest (default: /bin/busybox sh -l)
+    \\  --monitor                show the sandbox monitor of the project
+    \\  --tui                    with --monitor: write the timeline to the terminal
     \\  --mcp                    serve the MCP bridge of the project on stdin and stdout
     \\  --headless               use the headless backend
     \\  --dark                   the dark color scheme
@@ -99,6 +106,10 @@ pub fn main(init: std.process.Init) !void {
     var project: ?[]const u8 = null;
     var run_file: ?[]const u8 = null;
     var serve_mcp = false;
+    var sandbox_dir: ?[]const u8 = null;
+    var monitor_mode = false;
+    var tui = false;
+    var sandbox_argv: []const u8 = "/bin/busybox sh -l";
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const a: []const u8 = args[i];
@@ -113,6 +124,17 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, a, "--run") and has_value) {
             i += 1;
             run_file = args[i];
+        } else if (std.mem.eql(u8, a, "--sandbox") and has_value) {
+            i += 1;
+            sandbox_dir = args[i];
+        } else if (std.mem.eql(u8, a, "--sandbox-command") and has_value) {
+            i += 1;
+            sandbox_argv = args[i];
+        } else if (std.mem.eql(u8, a, "--monitor")) {
+            monitor_mode = true;
+        } else if (std.mem.eql(u8, a, "--tui")) {
+            tui = true;
+            headless = true;
         } else if (std.mem.eql(u8, a, "--mcp")) {
             serve_mcp = true;
         } else if (std.mem.eql(u8, a, "--exit-after-frames") and has_value) {
@@ -170,6 +192,13 @@ pub fn main(init: std.process.Init) !void {
             .headless = headless,
             .dark = dark,
         });
+        const guest = if (sandbox_dir) |d| sandbox.prepare(arena, folder, try std.fs.path.resolve(arena, &.{ cwd, d }), try std.process.executablePathAlloc(io, arena)) catch |e|
+            fail(err, "dockyard: no guest files in {s}: {s}\n", .{ d, @errorName(e) })
+        else
+            null;
+        try sandbox.setVars(&it, guest, sandbox_argv, sandbox.default_allow);
+        try monitor.register(&it, try host.controlPath(arena, runtime, folder));
+        try it.setVar("::dockyard::tui", .{ .str = if (tui) "1" else "0" });
     }
 
     var head: ?*ztk.headless.Headless = null;
@@ -224,7 +253,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var status: u8 = 0;
-    const main_script = if (run_path != null) try std.fmt.allocPrint(arena, "source {{/{s}}}", .{run_name}) else window_script;
+    const main_script = if (run_path != null) try std.fmt.allocPrint(arena, "source {{/{s}}}", .{run_name}) else if (monitor_mode) monitor_script else sandbox.script ++ window_script;
     // The timer of --exit-after-ms starts with the script.
     const script = if (exit_ms) |ms| try std.fmt.allocPrint(arena, "after {d} ::dockyard::stop\n{s}", .{ ms, main_script }) else main_script;
     if (ctl) |c| {

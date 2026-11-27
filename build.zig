@@ -59,6 +59,24 @@ pub fn build(b: *std.Build) void {
         runtimes_step.dependOn(&install.step);
     }
 
+    // The helper of the sandbox guest (src/guest/main.zig), static and
+    // with no libc, for each Linux architecture of a guest:
+    // zig-out/lib/dockyard/guest/ARCH/dockyard-guest.
+    const guest_step = b.step("guest", "Install only the helpers of the sandbox guest");
+    for ([_][]const u8{ "x86_64", "aarch64" }) |arch| {
+        const gt = b.resolveTargetQuery(std.Target.Query.parse(.{ .arch_os_abi = b.fmt("{s}-linux-musl", .{arch}) }) catch @panic("bad target"));
+        const guest = b.addExecutable(.{ .name = "dockyard-guest", .root_module = b.createModule(.{
+            .root_source_file = b.path("src/guest/main.zig"),
+            .target = gt,
+            .optimize = .ReleaseSmall,
+            .strip = true,
+            .single_threaded = true,
+        }) });
+        const install = b.addInstallArtifact(guest, .{ .dest_dir = .{ .override = .{ .custom = b.fmt("lib/dockyard/guest/{s}", .{arch}) } } });
+        b.getInstallStep().dependOn(&install.step);
+        guest_step.dependOn(&install.step);
+    }
+
     const run = b.addRunArtifact(exe);
     run.addPassthruArgs();
     b.step("run", "Run dockyard").dependOn(&run.step);
@@ -75,6 +93,14 @@ pub fn build(b: *std.Build) void {
     // The Build test copies the ztk program of this build.
     const host_rt = b.dependency("ztk", .{ .target = target, .optimize = .ReleaseFast, .strip = true }).artifact("ztk");
     test_opts.addOptionPath("host_runtime", host_rt.getEmittedBin());
+    // The guest helper test runs the helper of this machine on the host.
+    const host_guest = b.addExecutable(.{ .name = "dockyard-guest", .root_module = b.createModule(.{
+        .root_source_file = b.path("src/guest/main.zig"),
+        .target = b.resolveTargetQuery(.{ .cpu_arch = target.result.cpu.arch, .os_tag = .linux, .abi = .musl }),
+        .optimize = .ReleaseSmall,
+        .single_threaded = true,
+    }) });
+    test_opts.addOptionPath("guest_helper", host_guest.getEmittedBin());
     test_module.addOptions("test_options", test_opts);
     const tests = b.addTest(.{ .root_module = test_module, .use_llvm = true, .use_lld = use_lld });
     const run_tests = b.addRunArtifact(tests);

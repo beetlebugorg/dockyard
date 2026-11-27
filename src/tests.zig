@@ -60,6 +60,8 @@ test {
     _ = @import("mcp.zig");
     _ = @import("apps.zig");
     _ = @import("proxy.zig");
+    _ = @import("guest_test.zig");
+    _ = @import("monitor.zig");
     _ = @import("sock.zig");
 }
 

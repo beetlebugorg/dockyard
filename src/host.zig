@@ -118,9 +118,13 @@ pub fn findProgram(a: std.mem.Allocator, path: []const u8, name: []const u8) !?[
 /// has `NAME=value` strings that live as long as the interpreter.
 pub fn allow(it: *ztcl.Interp, project: []const u8, env: []const [:0]const u8) !void {
     const cap = ztcl.interp.Capability;
-    try it.allow(@backingInt(cap.exec) | @backingInt(cap.channels) | @backingInt(cap.file));
+    // `vm` and `event` are for the sandbox (`sandbox.tcl`): the guest,
+    // and the file events of its vsock channels. `clock` gives the times
+    // of the events of the monitor.
+    try it.allow(@backingInt(cap.exec) | @backingInt(cap.channels) | @backingInt(cap.file) | @backingInt(cap.vm) | @backingInt(cap.event) | @backingInt(cap.clock));
     try ztcl.fsroot.setRoot(it, project);
     it.clock_host = clock_host;
+    it.event_host = .{ .now = eventNow, .sleep = eventSleep };
     it.exec_host = .{ .allow = null, .timeout_ms = 0, .env = env };
     try it.register("::dockyard::findProgram", cmdFindProgram);
     // The preview child gets the same environment, so the same socket path.
@@ -157,6 +161,26 @@ fn clockNow(_: ?*anyopaque) i64 {
     var ts: std.c.timespec = undefined;
     if (std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts) != 0) return 0;
     return @as(i64, ts.sec) * 1_000_000 + @divFloor(@as(i64, ts.nsec), 1000);
+}
+
+extern "kernel32" fn GetTickCount64() callconv(.winapi) u64;
+extern "kernel32" fn Sleep(ms: u32) callconv(.winapi) void;
+
+/// The clock of the event commands of ztcl, in microseconds, on a clock
+/// that does not go back. The loop of ztk runs the events of the window;
+/// this clock is for `fileevent` and `vwait` in the sandbox commands.
+fn eventNow(_: ?*anyopaque) i64 {
+    if (comptime on_win) return @as(i64, @intCast(GetTickCount64())) * 1000;
+    var ts: std.c.timespec = undefined;
+    if (std.c.clock_gettime(std.c.CLOCK.MONOTONIC, &ts) != 0) return 0;
+    return @as(i64, ts.sec) * 1_000_000 + @divFloor(@as(i64, ts.nsec), 1000);
+}
+
+fn eventSleep(_: ?*anyopaque, us: i64) void {
+    if (us <= 0) return;
+    if (comptime on_win) return Sleep(@intCast(@divFloor(us + 999, 1000)));
+    var ts: std.c.timespec = .{ .sec = @intCast(@divFloor(us, 1_000_000)), .nsec = @intCast(@mod(us, 1_000_000) * 1000) };
+    _ = std.c.nanosleep(&ts, null);
 }
 
 /// The zone file `name`. Windows has no zone files, so a zone by name
