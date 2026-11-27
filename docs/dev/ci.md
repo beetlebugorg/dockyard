@@ -21,3 +21,12 @@ Facts from the logs of these runs:
 ## Changes
 
 1. `tools/skill.sh` builds the six targets with one `zig build`, so that Zig compiles them in parallel. The Test job builds the program and the tests with one `zig build`. Runs on main are no longer cancelled by a later push.
+2. Pull requests and pushes build the skill zip with the two targets of `tools/skill-test.sh` (x86_64-linux and x86_64-windows). A new scheduled run every 6 hours builds all six targets and checks the size of the zip.
+
+## After
+
+| Change | Pull request | Slowest job | Run wall time |
+|---|---|---|---|
+| 1 (one `zig build` for the six targets) | #25 (CI files) | Skill (Linux), 10.9 | 11.0 |
+
+In the #25 run, `tools/skill.sh` took 626 seconds and the Test job 4.7 minutes.
