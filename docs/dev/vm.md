@@ -17,7 +17,7 @@ Date: 2026-11-26. State: plan. This page has the steps of issues 13 and 15. Each
 | The entitlement in the Zig signer | ztcl | ztcl `docs/dev/vm.md` step 3. |
 | The guest agent (`exec`, `mount`, and a PTY over vsock) | ztcl | ztcl `docs/dev/vm.md` step 4. The terminal pane needs a PTY in the guest, so the agent needs an `op` for a PTY session: a vsock connection with the bytes of the PTY, and a resize frame. |
 | The base image: the kernel and BusyBox | dockyard `os/` | Not started. |
-| The tools disk: the agent program, git, and Zig | dockyard `os/` | Not started. |
+| The tools disk: node, git, and Zig | dockyard `os/tools` | The disk, the manifest, and the test signature in CI (`.github/workflows/guest.yml`). The mount in the guest and the trust of the key in the app wait for ztcl PRs 435 and 455. |
 | The egress proxy with an allow list | dockyard `src/proxy.zig` | Step 1 below. |
 | The terminal pane in the VM | dockyard | Step 4 below. First form on Linux KVM: the helper of the guest (`docs/dev/guest.md`) gives the PTY, the proxy port, and the events, so the agent of ztcl needs no PTY op. |
 | KVM and HCS in `ztcl::vm` | ztcl | Not started. Linux and Windows wait for them. |
@@ -26,7 +26,7 @@ Date: 2026-11-26. State: plan. This page has the steps of issues 13 and 15. Each
 
 - A Buildroot external tree in `os/`, with a pinned Buildroot release, a defconfig for x86_64 and for aarch64, musl, and no package manager.
 - The kernel: `tinyconfig` and a fragment with virtio PCI, virtio-console, virtio-blk, virtio-vsock, virtio-fs and FUSE, devtmpfs, EROFS for the read-only root, overlayfs, Unix and IPv4 sockets, PTYs, epoll, eventfd, and futex. No modules, no network device (the proxy goes over vsock), and no debug information.
-- The base image is the kernel and a BusyBox root with the guest agent of ztcl as init. The tools disk is a second read-only EROFS disk.
+- The base image is the kernel and a BusyBox root with the guest agent of ztcl as init. The tools disk is a second read-only squashfs disk.
 - CI builds the images in a container and attaches them to a release with a manifest (versions, sizes, SHA-256) and a signature. dockyard has the public key, downloads the images on the first use, and refuses an image with a bad hash or signature.
 
 ## The network
@@ -59,13 +59,14 @@ A guest program can reach: the project folder (virtio-fs, read-write), the files
 1. One VM for each project, or one VM for all the projects? Default: one for each project, so a project sees only its own folder.
 2. The proxy sees only the host names of HTTPS connections (CONNECT). The bodies of the requests need a local CA that the guest trusts. Default: off, as issue 15 says.
 
-## The tools disk (plan, 2026-11-27)
+## The tools disk
 
-The guest of ztcl has BusyBox and the agent of ztcl only. The program of the pane needs node (or a static build of the agent program), git, and the helper of dockyard. These go on a second read-only disk, in the image format of ztcl `docs/dev/vm-image.md`:
+The guest of ztcl has BusyBox and the agent of ztcl only. The pane needs node and npm for the agent program, git, Zig, and the helper of dockyard. These are on a second read-only disk, in the image format of ztcl `docs/dev/vm-image.md`.
 
-- The disk: a squashfs of `/tools` (`bin/node`, `bin/git`, `bin/dockyard-guest`, `lib/node_modules/...`), padded to 4 KiB blocks, with the `dm-verity` hash tree after the data, as `image.sh` of ztcl makes the root disk. node and git are static musl builds, made in the CI job from release archives and checked by their SHA-256; nobody reads their source.
-- The manifest: the kernel and the root disk of the ztcl guest release (by SHA-256), and the tools disk as `disks[1]` with its `verity` fields. The command line maps it as `dm-1` and the helper mounts it at `/tools`. A manifest per architecture pair, with a `counter` that grows.
-- The signature: a key of dockyard. `ztcl::vm` trusts only the keys of ztcl today, so dockyard needs an embedder key list in `Interp.vm_host` (a question for ztcl). Until then a dockyard build signs with ztcl's test key under a `-test` name, in Debug only.
-- The CI job (`.github/workflows/guest.yml`): build the disk on x86_64 and arm64 runners, write the manifest, sign it in a protected environment, and attach the files to a release `guest-vN`. Size goal: under 60 MB compressed for each architecture.
-- In the app: `ztcl::vm image install` of the release into the store, `create -image dockyard-guest`, and the update panel of issue 13 (current and new versions, Update, Roll back).
-- The helper then comes from `/tools/bin`, and the copy over `exec` goes away.
+- The disk (`os/tools/build.sh ARCH`): an Alpine root made by `apk` in a container of `alpine:3.24`, pinned by digest. It has the packages `busybox`, `musl`, `ca-certificates`, `nodejs`, `npm`, `git`, `git-lfs`, and `openssh-client`, Zig 0.17.0 in `/opt/zig` from its release archive (checked by SHA-256), and the helper in `/usr/libexec/dockyard/`. `mksquashfs` with xz, fixed times and owners, padded to 4 KiB blocks, then the `dm-verity` tree after the data with a fixed salt. `ARCH-packages.txt` lists the versions of the packages. Two local builds of 2026-11-27 gave different SHA-256 sums of the disk. The cause is not known yet.
+- The disk is a whole root, so the programs find their libraries at the usual paths. The helper will mount it at `/mnt` of the guest and run the pane in a chroot of it, with `/work`, `/dev`, `/proc`, and a tmpfs `/tmp` bound in.
+- The manifest (`os/tools/manifest.sh`): the kernel and the root disk of a ztcl guest release, and the tools disk as `disks[1]`. The command line waits for `/dev/vda,/dev/vdb` and has a second `dm-mod.create` device, `tools`. This device is `/dev/dm-1`. The counter is the commit time of HEAD.
+- The signature: the test key of dockyard (`os/tools/testkey`, `SHA256:gchh612FPBuG9Y27nSPqS/MTagl9PCQs6PovKhs8Q94`) signs the name `dockyard-guest-test`, in the namespace `ztcl-vm-image`. Its private half is in the repository, so the app trusts it only as a `test_only` key (ztcl PR 455, `Interp.vm_host.image_keys`) and only in a Debug build. A release key of dockyard and its environment come later, with the owner of the repository.
+- The CI job (`.github/workflows/guest.yml`): the disk on an x86-64 runner and an arm64 runner, then the manifest and the check of its signature with `ssh-keygen -Y verify`, as the artifact `dockyard-guest-test`.
+- The size: the x86-64 disk is 111,439,872 bytes (`stat` in `build.sh`, 2026-11-27). xz does not make it smaller (111,415,412 bytes with `xz -T2 -c | wc -c`), since the squashfs is xz already. The plan had a goal of 60 MB.
+- Next: the mount and the chroot in the helper, `ztcl::vm image install` of the release and `create -image dockyard-guest-test` in `sandbox.tcl` (after ztcl PR 435), and the update panel of issue 13. The helper then comes from the disk, and the copy over `exec` goes away.
