@@ -27,8 +27,11 @@ env:
   ZIG_VERSION: "0.17.0"
 
 jobs:
+  # A pull request runs only the quick check. The QA agents test it on
+  # our machines and post the status qa/linux (docs/dev/ci.md of ztcl).
   test:
     name: Test (Linux)
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -64,6 +67,7 @@ jobs:
 
   skill:
     name: Skill (Linux)
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -86,6 +90,27 @@ jobs:
       - name: Test the skill as a sandbox uses it
         run: tools/skill-test.sh
 
+  # The quick check of a pull request: the format and a build.
+  quick:
+    name: Quick check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Check the format
+        run: zig fmt --check build.zig src
+      - name: Install the Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y glslc libwayland-dev libxkbcommon-dev wayland-protocols
+      - name: Build
+        run: |
+          ulimit -v 6000000
+          zig build install
+
   # A failure of the scheduled full run opens an issue, so it is fixed
   # in the next batch of work.
   report:
@@ -104,13 +129,13 @@ jobs:
             --title "The full CI run failed on $(date -u +%Y-%m-%d)" \
             --body "The scheduled full run failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
-  # The one check for the merge: it passes when each job of the run
-  # passed or was skipped, and fails when a job failed or was
-  # cancelled.
+  # The one check of a run: it passes when each job of the run passed
+  # or was skipped, and fails when a job failed or was cancelled. On a
+  # pull request it is advisory: the gate is the status qa/linux.
   linux-ok:
     name: Linux ok
     if: always()
-    needs: [test, skill]
+    needs: [quick, test, skill]
     runs-on: ubuntu-latest
     steps:
       - name: Check the results of the jobs

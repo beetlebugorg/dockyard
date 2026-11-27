@@ -116,8 +116,7 @@ const Run = struct {
                 try std.fmt.allocPrintSentinel(a, "TEMP={s}", .{t}, 0),
                 try std.fmt.allocPrintSentinel(a, "TMP={s}", .{t}, 0),
             });
-        } else
-            try a.dupe([:0]const u8, &.{ "PATH=" ++ test_path, "HOME=/tmp", "PS1=$ " });
+        } else try a.dupe([:0]const u8, &.{ "PATH=" ++ test_path, "HOME=/tmp", "PS1=$ " });
         try host.allow(&r.it, folder, env);
         // The folder of the ztk programs has the ztk program of the build,
         // for the target of this computer: a link, or a copy on Windows,
