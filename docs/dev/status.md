@@ -25,8 +25,8 @@ This page has the state of each step of the build order (section 9 of `spec.md`)
 | Claude skill (issue 16) | dockyard | `skill/dockyard-app/` (SKILL.md and the `dockyard` CLI: new, run, check, build), `tools/skill.sh` (the zip with the ztk programs of all the targets, and the size check), `tools/skill-test.sh`, and the CI job `Skill (Linux)`. Not published: a release of the zip waits for the user. |
 | Sandbox plan (issues 13 and 15) | dockyard | `docs/dev/vm.md`: the parts, the image, the network, the threat model, and 8 steps. |
 | Egress proxy (step 1 of `vm.md`) | dockyard | Done: `src/proxy.zig`, the Tcl command `dockyard::proxy` (start, allow, events, and stop), with a relay test and a block test. CONNECT only. |
-| microVM terminal on macOS (issue 13) | dockyard, ztcl | Not started: needs the guest agent with a PTY session (ztcl `docs/dev/vm.md` step 4), the base image (`os/`), and a Mac to test. Linux waits for KVM and Windows for HCS in `ztcl::vm`. |
-| Sandbox monitor (issue 15) | dockyard | Not started: steps 5 to 7 of `vm.md`. |
+| microVM terminal (issue 13) | dockyard, ztcl | Linux KVM first form: `dockyard --sandbox DIR` runs the terminal pane on a PTY of a guest of `ztcl::vm`, over vsock, through the helper of `docs/dev/guest.md` (`src/guest/main.zig`, `src/sandbox.tcl`, `src/sandbox.zig`). The proxy port of the guest goes to `dockyard::proxy attach`. Waits for: the KVM shares (ztcl PR 385), `CONFIG_INET` in the guest kernel, the KVM thread fix (ztcl PR 436) in the ztcl of ztk, and the tools disk. macOS and Windows: not checked yet. |
+| Sandbox monitor (issue 15) | dockyard | First form: `docs/dev/monitor.md`. The log outside the project (`src/monitor.zig`), the window and the terminal view in one program (`dockyard --monitor ?--tui?`, `src/monitor.tcl`), the rules of the blocked tray, and the sharing panel (Shares). Not started: the hooks and metrics of the agent program, the diff of each step, the replay. |
 
 ## Next steps
 

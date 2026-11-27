@@ -19,7 +19,8 @@
 //! One thread accepts the connections, and each connection has its own
 //! thread with blocking sockets and `poll`. A mutex guards the allow
 //! list and the events. Tcl commands: `dockyard::proxy start ?port?`,
-//! `allow ?list?`, `events`, and `stop`.
+//! `allow ?list?`, `attach channel` (a connection of the guest, from the
+//! relay of `sandbox.tcl`), `events`, and `stop`.
 //!
 //! The proxy uses the sockets of the C library, so on Windows each
 //! subcommand gives an error until the port of dockyard (dockyard#23).
@@ -110,6 +111,13 @@ pub const Proxy = struct {
         var copy = e;
         copy.host = host;
         p.events.append(p.gpa, copy) catch p.gpa.free(host);
+    }
+
+    /// Serves one connection that the caller opened, such as a vsock
+    /// stream of the guest, in a thread of its own. The proxy closes it.
+    pub fn attach(p: *Proxy, conn: c.fd_t) !void {
+        const t = try std.Thread.spawn(.{}, serve, .{ p, conn });
+        t.detach();
     }
 
     /// Gives the events since the last call. The caller frees the list
@@ -274,7 +282,7 @@ pub fn register(it: *ztcl.Interp) !void {
 /// each a dict. `stop` ends the proxy.
 fn cmdProxy(it: *ztcl.Interp, argv: []const ztcl.Value, _: ?*ztcl.interp.Cmd) ztcl.Error!ztcl.Value {
     if (comptime @import("builtin").os.tag == .windows) return it.fail("proxy: the egress proxy is not available on Windows yet", .{});
-    if (argv.len < 2) return it.wrongArgs("dockyard::proxy start|allow|events|stop ?arg?");
+    if (argv.len < 2) return it.wrongArgs("dockyard::proxy start|allow|attach|events|stop ?arg?");
     const sub = try it.str(argv[1]);
     const a = it.alloc();
     if (std.mem.eql(u8, sub, "start")) {
@@ -302,6 +310,21 @@ fn cmdProxy(it: *ztcl.Interp, argv: []const ztcl.Value, _: ?*ztcl.interp.Cmd) zt
         for (p.allow_list.items) |h| try out.append(a, .{ .str = try a.dupe(u8, h) });
         return ztcl.value.newList(a, out.items);
     }
+    if (std.mem.eql(u8, sub, "attach")) {
+        // The channel leaves the interpreter, and its descriptor goes to
+        // a thread of the proxy.
+        if (argv.len != 3) return it.wrongArgs("dockyard::proxy attach channel");
+        const name = try it.str(argv[2]);
+        const ch = ztcl.chan.lookup(it, name) orelse return it.fail("can not find channel named \"{s}\"", .{name});
+        if (ch.rbuf.items.len > ch.rpos or ch.wbuf.items.len > 0 or ch.wfd >= 0)
+            return it.fail("proxy: the channel {s} has buffered bytes or two descriptors", .{name});
+        _ = ztcl.chan.release(it, name);
+        p.attach(ch.fd) catch |e| {
+            _ = c.close(ch.fd);
+            return it.fail("proxy: {s}", .{@errorName(e)});
+        };
+        return .empty;
+    }
     if (std.mem.eql(u8, sub, "events")) {
         const evs = try p.take();
         defer {
@@ -320,7 +343,7 @@ fn cmdProxy(it: *ztcl.Interp, argv: []const ztcl.Value, _: ?*ztcl.interp.Cmd) zt
         }));
         return ztcl.value.newList(a, out.items);
     }
-    return it.fail("bad option \"{s}\": must be start, allow, events, or stop", .{sub});
+    return it.fail("bad option \"{s}\": must be start, allow, attach, events, or stop", .{sub});
 }
 
 test "allow list entries match hosts and suffixes" {

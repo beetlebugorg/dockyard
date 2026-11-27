@@ -19,7 +19,7 @@ Date: 2026-11-26. State: plan. This page has the steps of issues 13 and 15. Each
 | The base image: the kernel and BusyBox | dockyard `os/` | Not started. |
 | The tools disk: the agent program, git, and Zig | dockyard `os/` | Not started. |
 | The egress proxy with an allow list | dockyard `src/proxy.zig` | Step 1 below. |
-| The terminal pane in the VM | dockyard | Step 4 below. |
+| The terminal pane in the VM | dockyard | Step 4 below. First form on Linux KVM: the helper of the guest (`docs/dev/guest.md`) gives the PTY, the proxy port, and the events, so the agent of ztcl needs no PTY op. |
 | KVM and HCS in `ztcl::vm` | ztcl | Not started. Linux and Windows wait for them. |
 
 ## The image (like Printdeck OS)
