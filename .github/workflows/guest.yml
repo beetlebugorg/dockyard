@@ -42,6 +42,13 @@ jobs:
           version: ${{ env.ZIG_VERSION }}
       - name: Build the tools disk
         run: ARCH=${{ matrix.arch }} OUT=out sh os/tools/build.sh
+      # The disk is signed, so two builds must give the same bytes.
+      - name: Build it again and compare
+        run: |
+          ARCH=${{ matrix.arch }} OUT=again sh os/tools/build.sh
+          cmp out/${{ matrix.arch }}-tools.img again/${{ matrix.arch }}-tools.img
+          cmp out/${{ matrix.arch }}-tools.json again/${{ matrix.arch }}-tools.json
+          rm -rf again
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tools-${{ matrix.arch }}
