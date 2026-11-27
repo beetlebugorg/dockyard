@@ -19,18 +19,22 @@ cp "$root/tools/demo-app.tcl" "$project/main.tcl"
 git -C "$project" init -q
 # A sample audit log: two turns of the agent with its tool calls, the
 # programs, the calls of the proxy, a blocked call, and a share. The
-# first window run adds the records with --audit-import. HOME is a
-# private folder, so the log is not the audit log of the user.
-export HOME=$work/home
+# first window run adds the records with --audit-import. HOME and
+# XDG_STATE_HOME are private folders, so the log is not the audit
+# log of the user.
+export HOME=$work/home XDG_STATE_HOME=$work/state
 rt=$work/rt
 mkdir -p "$rt" "$HOME" "$project/.dockyard"
+# The session records have the path of the agent program, so the
+# program is in the work folder.
+cp "$root/tools/demo-agent.sh" "$work/demo-agent.sh"
 printf '*\n' > "$project/.dockyard/.gitignore"
 t=$(($(date +%s) * 1000))
 cat > "$project/.dockyard/sample.audit" <<END
 kind session data {op start sandbox true argv {/bin/busybox sh -l}} source app time $((t - 9000))
 kind turn data {op start prompt {Make a tip calculator: the bill, a slider for the tip, and the total.}} turn s1.1 source hook time $((t - 8000))
 kind tool data {op start tool Write input {path /work/main.tcl}} turn s1.1 call c1 source hook time $((t - 7000))
-kind file data {op write path /main.tcl diff {@@ -0,0 +1,3 @@\n+wm title . "Tip calculator"\n+label .h -text "Tip calculator"\n+pack .h}} turn s1.1 call c1 source watch time $((t - 6900))
+kind file data {op write path /main.tcl} turn s1.1 call c1 source watch time $((t - 6900))
 kind tool data {op end tool Write input {path /work/main.tcl} ok true} turn s1.1 call c1 source hook time $((t - 6800))
 kind tool data {op start tool mcp__dockyard__screenshot input {}} turn s1.1 call c2 source hook time $((t - 6000))
 kind tool data {op end tool mcp__dockyard__screenshot input {} ok true} turn s1.1 call c2 source hook time $((t - 5900))
@@ -46,7 +50,7 @@ kind tool data {op start tool Bash input {command {wget -q https://example.com/u
 kind exec data {pid 244 ppid 212 argv {/bin/busybox wget -q https://example.com/upload} cwd /work} turn s1.2 call c4 source helper time $((t - 2400))
 kind net data {host example.com port 443 result blocked rule {} up 0 down 0 ms 0} turn s1.2 call c4 source proxy time $((t - 2300))
 kind blocked data {what net target example.com:443 rule {}} turn s1.2 call c4 source proxy time $((t - 2300))
-kind exit data {pid 244 code 1 ms 40 output {wget: can't connect to remote host: Connection refused}} turn s1.2 source helper time $((t - 2200))
+kind exit data {pid 244 code 1 ms 40} turn s1.2 source helper time $((t - 2200))
 kind tool data {op end tool Bash input {command wget} ok false} turn s1.2 call c4 source hook time $((t - 2100))
 kind share data {op share name report.csv} source app time $((t - 1500))
 kind build data {op end targets x86_64-linux ok true} source app time $((t - 1000))
@@ -57,10 +61,10 @@ for scheme in light dark; do
     [ "$scheme" = dark ] && flag=--dark
     import=
     [ "$scheme" = light ] && import="--audit-import .dockyard/sample.audit"
-    (cd "$work" && XDG_RUNTIME_DIR=$rt "$exe" --headless $flag $import --agent "$root/tools/demo-agent.sh" \
+    (cd "$work" && XDG_RUNTIME_DIR=$rt "$exe" --headless $flag $import --agent "$work/demo-agent.sh" \
         --exit-after-ms 4000 --screenshot "$root/docs/images/dockyard-$scheme.png" \
         tip-calculator)
-    (cd "$work" && XDG_RUNTIME_DIR=$rt "$exe" --headless $flag --view activity --agent "$root/tools/demo-agent.sh" \
+    (cd "$work" && XDG_RUNTIME_DIR=$rt "$exe" --headless $flag --view activity --agent "$work/demo-agent.sh" \
         --exit-after-ms 3000 --screenshot "$root/docs/images/activity-$scheme.png" tip-calculator)
 done
 # The monitor, with the same log.

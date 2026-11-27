@@ -289,7 +289,7 @@ proc ::dockyard::activity::render {} {
         if {$type eq "turn"} {
             $c create rectangle 6 [expr {$y + 2}] [expr {$w - 6}] [expr {$y + $rowh - 2}] -fill [::ui::color sunken] -outline "" -tags [list row r$r]
             set p [expr {$id > 0 ? [lindex $prompts [expr {$id - 1}]] : {}}]
-            set text [expr {$id > 0 ? "You asked: [lindex $p 1]" : "Before the first prompt"}]
+            set text [expr {$id > 0 ? "You asked: [lindex $p 1]" : "Outside a turn"}]
             $c create image 18 [expr {$y + $rowh / 2}] -image [::ui::icon prompt accent] -anchor w -tags [list row r$r]
             $c create text 40 [expr {$y + $rowh / 2}] -text [string range [string map {\n " "} $text] 0 110] -anchor w -fill $fg -font {TkDefaultFont 10} -tags [list row r$r]
             if {$id > 0} {
