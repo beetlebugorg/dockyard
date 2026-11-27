@@ -19,7 +19,7 @@ With `-image NAME`, the guest is a signed release of the store (`os/tools/manife
 
 The pane and its programs run in the chroot, so they find node, git, and Zig at the usual paths. `dockyard::sandbox::path VM PATH` gives the path in the guest of a path of the pane, for an `exec` outside the chroot. The hook command of the settings is the helper of the disk.
 
-`dockyard --sandbox DIR` boots a release when `DIR` has a `manifest.json`. The app copies the manifest, its signature, and the files of its architecture to `.dockyard/guest/` of the project (`src/guest_release.zig`), and skips the copy when the manifest there is the same. It installs the release with `ztcl::vm image install` when the current counter of the store is another one. A Debug build trusts the test key of dockyard (`test_only`, a name that ends in `-test`). A release build trusts no key of dockyard yet.
+`dockyard --sandbox DIR` boots a release when `DIR` has a `manifest.json`. The app copies the manifest, its signature, and the files of its architecture to `.dockyard/guest/` of the project (`src/sandbox/guest_release.zig`), and skips the copy when the manifest there is the same. It installs the release with `ztcl::vm image install` when the current counter of the store is another one. A Debug build trusts the test key of dockyard (`test_only`, a name that ends in `-test`). A release build trusts no key of dockyard yet.
 
 ## The ports
 

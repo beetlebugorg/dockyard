@@ -1,6 +1,6 @@
 # The design of the dockyard window
 
-This page sets the layout, the look, and the behavior of the window. The mockups are headless snapshots of `tools/mockup.tcl` (made by `tools/mockups.sh`). They use the stylesheet and the parts of `src/theme.tcl`, so the window and the mockups have one look. The data in the mockups is sample data.
+This page sets the layout, the look, and the behavior of the window. The mockups are headless snapshots of `tools/mockup.tcl` (made by `tools/mockups.sh`). They use the stylesheet and the parts of `src/ui/theme.tcl`, so the window and the mockups have one look. The data in the mockups is sample data.
 
 ## Problems of the first window
 
@@ -124,8 +124,8 @@ The view must stay fast with tens of thousands of events.
 
 - Spacing: 4, 8, 12, 16, and 24 pixels. Cards have 12 pixels between them and 12 pixels of padding.
 - Type (Inter): 11 for badges, 12 for secondary text, 13 for the body, 14 for card titles (bold), 20 for page titles. Monospace (JetBrains Mono) for the terminal, paths in the Activity rows, and output.
-- Color: CSS variables on the root, with a light and a dark value (`src/theme.tcl`). The accent is the blue of the logo. Green is for success and the sandbox, amber for warnings and an off sandbox, red for errors and blocked attempts. The scheme follows the system, or `--dark`.
-- Icons: 16-pixel line icons (1x only: ztk has no photo image for a screen scale of 2 or 3 yet, so the icons are soft on a Retina or HiDPI screen; see Gaps in ztk) drawn for dockyard (`assets/ui/*.svg`), rendered to PNG in each tone by `tools/ui-icons.py` into `src/ui-icons.tcl` (72 KB). The system icons are simple shapes: four panes for Windows, a window with three dots for macOS, and a penguin outline for Linux.
+- Color: CSS variables on the root, with a light and a dark value (`src/ui/theme.tcl`). The accent is the blue of the logo. Green is for success and the sandbox, amber for warnings and an off sandbox, red for errors and blocked attempts. The scheme follows the system, or `--dark`.
+- Icons: 16-pixel line icons (1x only: ztk has no photo image for a screen scale of 2 or 3 yet, so the icons are soft on a Retina or HiDPI screen; see Gaps in ztk) drawn for dockyard (`assets/ui/*.svg`), rendered to PNG in each tone by `tools/ui-icons.py` into `src/ui/ui-icons.tcl` (72 KB). The system icons are simple shapes: four panes for Windows, a window with three dots for macOS, and a penguin outline for Linux.
 - Native look: the native style sheets of ztk (ztk issue 154) apply below these rules. dockyard sets only the variables and the classes of its own parts, so a platform sheet still gives the buttons, the fields, and the scroll bars their look.
 
 ## Keyboard
@@ -152,7 +152,7 @@ The terminal gets most keys, so the window shortcuts use Ctrl+Shift on Linux and
 
 Each step is one PR with before and after screenshots of `tools/screenshots.sh`.
 
-1. This spec, the mockups, the icons, and `src/theme.tcl`.
+1. This spec, the mockups, the icons, and `src/ui/theme.tcl`.
 2. The Workspace view: the header, the cards, the device frame, the console strip, the status bar, and the shortcuts.
 3. Build: the target picker, the settings file, and the build state.
 4. The Apps view, the empty states, and the first run.

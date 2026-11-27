@@ -4,13 +4,13 @@ Date: 2026-11-27. State: first form. The monitor shows what the programs of the 
 
 ## The log
 
-The monitor shows the audit log of the project: `audit.md` has its schema, its folder, and its commands. The dockyard window writes the records with `src/audit.tcl`. The monitor reads the last 10,000 records at its start, then the new records every 250 ms (`dockyard::audit query -after SEQ`).
+The monitor shows the audit log of the project: `audit.md` has its schema, its folder, and its commands. The dockyard window writes the records with `src/audit/audit.tcl`. The monitor reads the last 10,000 records at its start, then the new records every 250 ms (`dockyard::audit query -after SEQ`).
 
-The rules file (`dockyard-HASH.rules`) is next to the control socket of the project (`$XDG_RUNTIME_DIR`, or `/tmp` with the user ID), with mode 0600. `dockyard::monitor rule` and `dockyard::monitor rules` (`src/monitor.zig`) write and read it.
+The rules file (`dockyard-HASH.rules`) is next to the control socket of the project (`$XDG_RUNTIME_DIR`, or `/tmp` with the user ID), with mode 0600. `dockyard::monitor rule` and `dockyard::monitor rules` (`src/sandbox/monitor.zig`) write and read it.
 
 ## The front ends
 
-`dockyard --monitor PROJECT` opens the window of the monitor (`src/monitor.tcl`): a filter, a check button for each kind, the timeline with a color for each kind, and the tray of the blocked hosts. Allow on a blocked host writes an `allow` rule. The dockyard window reads the rules every 250 ms and gives the proxy its default allow list with the rules applied.
+`dockyard --monitor PROJECT` opens the window of the monitor (`src/sandbox/monitor.tcl`): a filter, a check button for each kind, the timeline with a color for each kind, and the tray of the blocked hosts. Allow on a blocked host writes an `allow` rule. The dockyard window reads the rules every 250 ms and gives the proxy its default allow list with the rules applied.
 
 `dockyard --monitor --tui PROJECT` runs on the headless backend and writes each event as one line with an ANSI color to the terminal. It is the same program and the same script.
 
