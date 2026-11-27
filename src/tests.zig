@@ -29,6 +29,7 @@ test {
     _ = host;
     _ = @import("mcp.zig");
     _ = @import("apps.zig");
+    _ = @import("proxy.zig");
 }
 
 const window_script = @embedFile("dockyard.tcl");
