@@ -20,7 +20,7 @@ This page sets the layout, the look, and the behavior of the window. The mockups
 
 The window has three rows:
 
-1. The header (48 pixels): the logo, the project button (the name, a chevron, and the folder in a faint color), the view switch (Workspace, Activity, Apps) in the center, and the split Build button on the right with the count of selected targets.
+1. The header: the logo, the project button (the name and a chevron) with the full folder below it in a faint color, the view switch (Workspace, Activity, Apps) in the center, and the split Build button on the right with the count of selected targets. Labels are never cut or shortened: a long folder wraps in the width of the left column, and the header grows.
 2. The body: the view.
 3. The status bar (28 pixels).
 
@@ -125,7 +125,7 @@ The view must stay fast with tens of thousands of events.
 - Spacing: 4, 8, 12, 16, and 24 pixels. Cards have 12 pixels between them and 12 pixels of padding.
 - Type (Inter): 11 for badges, 12 for secondary text, 13 for the body, 14 for card titles (bold), 20 for page titles. Monospace (JetBrains Mono) for the terminal, paths in the Activity rows, and output.
 - Color: CSS variables on the root, with a light and a dark value (`src/theme.tcl`). The accent is the blue of the logo. Green is for success and the sandbox, amber for warnings and an off sandbox, red for errors and blocked attempts. The scheme follows the system, or `--dark`.
-- Icons: 16-pixel line icons drawn for dockyard (`assets/ui/*.svg`), rendered to PNG in each tone by `tools/ui-icons.py` into `src/ui-icons.tcl` (72 KB). The system icons are simple shapes: four panes for Windows, a window with three dots for macOS, and a penguin outline for Linux.
+- Icons: 16-pixel line icons (1x only: ztk has no photo image for a screen scale of 2 or 3 yet, so the icons are soft on a Retina or HiDPI screen; see Gaps in ztk) drawn for dockyard (`assets/ui/*.svg`), rendered to PNG in each tone by `tools/ui-icons.py` into `src/ui-icons.tcl` (72 KB). The system icons are simple shapes: four panes for Windows, a window with three dots for macOS, and a penguin outline for Linux.
 - Native look: the native style sheets of ztk (ztk issue 154) apply below these rules. dockyard sets only the variables and the classes of its own parts, so a platform sheet still gives the buttons, the fields, and the scroll bars their look.
 
 ## Keyboard
@@ -139,7 +139,6 @@ The terminal gets most keys, so the window shortcuts use Ctrl+Shift on Linux and
 | Ctrl+Shift+T | The target picker |
 | Ctrl+Shift+R | Restart the preview |
 | Ctrl+` | Open or close the console |
-| Ctrl+O | Switch the project |
 | Ctrl+F | Search in Activity |
 | Escape | Close the picker or a dialog |
 
@@ -162,6 +161,8 @@ Each step is one PR with before and after screenshots of `tools/screenshots.sh`.
 7. The README screenshots and the demo capture.
 
 ## Gaps in ztk
+
+- A photo image has one size in logical pixels and no form for 2x and 3x screens (ztk issue 298). dockyard needs an image with a device-pixel form for each scale (or an SVG image type), so that `tools/ui-icons.py` can give the icons at 16, 32, and 48 pixels.
 
 - `raise` with no sibling did not put a placed widget above its siblings in a headless test, so the picker lowers the other children of the toplevel.
 - In the preview child (`dockyard --run`), `--screenshot` saved an early frame, so `tools/mockups.sh` saves the image of `ztk::snapshot .` after an `update`.
