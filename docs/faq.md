@@ -30,7 +30,7 @@ A new run of `main.tcl` is the simplest way to show the current code. A reload w
 
 ## Can I run Claude Code in a sandbox?
 
-`dockyard --sandbox DIR` runs the terminal pane in a small Linux virtual machine, with a network allow list. It is a first form on x86-64 Linux: the guest has no node yet, so it runs a shell, and the ztcl of this dockyard has no folder share on KVM yet. [The sandbox](sandbox.md) has the state.
+`dockyard --sandbox DIR` runs the terminal pane in a small Linux virtual machine, with a network allow list. It is a first form on x86-64 Linux: the guest has no node yet, so it runs a shell. The project folder is at `/work` in the guest. [The sandbox](sandbox.md) has the state.
 
 ## Can I make apps without the dockyard window?
 

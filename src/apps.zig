@@ -136,12 +136,17 @@ fn build(a: std.mem.Allocator, target: []const u8) !BuildResult {
     var args: std.ArrayList([:0]const u8) = .empty;
     for ([_][]const u8{ "-o", out_path, "--target", target, "--runner", try runtimePath(a, target), "--allow", app_caps, "--name", name }) |s|
         try args.append(a, try a.dupeSentinel(u8, s, 0));
-    // icon.png of the project is the icon of the program: an .icns file
-    // in a macOS app, the icon resource of a Windows program.
-    const icon = try std.fs.path.joinZ(a, &.{ project, "icon.png" });
-    if (std.c.access(icon.ptr, 4) == 0) {
+    // The icon of the program: icon.ico of the project for a Windows
+    // program when it has one, else icon.png. A Linux program also gets
+    // NAME.desktop and NAME.png next to it.
+    const windows = std.mem.endsWith(u8, target, "-windows");
+    const ico = try std.fs.path.joinZ(a, &.{ project, "icon.ico" });
+    const png = try std.fs.path.joinZ(a, &.{ project, "icon.png" });
+    const icon: ?[:0]const u8 = if (windows and std.c.access(ico.ptr, 4) == 0) ico else if (std.c.access(png.ptr, 4) == 0) png else null;
+    if (icon) |p| {
         try args.append(a, "--icon");
-        try args.append(a, icon);
+        try args.append(a, p);
+        if (std.mem.endsWith(u8, target, "-linux")) try args.append(a, "--desktop");
     }
     for (try appFiles(a, project)) |f| try args.append(a, try a.dupeSentinel(u8, f, 0));
     var log: Io.Writer.Allocating = .init(a);
