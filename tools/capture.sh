@@ -29,6 +29,6 @@ shot 1 "" "$frames/1.png"
 shot 2 "$work/empty-bill.tcl" "$frames/2.png"
 shot 3 "$root/tools/demo-app.tcl" "$frames/3.png"
 magick -delay 160 "$frames/1.png" -delay 200 "$frames/2.png" -delay 400 "$frames/3.png" \
-    -resize 960x -layers Optimize -loop 0 "$root/docs/images/dockyard-demo.gif"
+    -layers Optimize -loop 0 "$root/docs/images/dockyard-demo.gif"
 rm -rf "$work"
 ls -l "$root/docs/images/dockyard-demo.gif"
