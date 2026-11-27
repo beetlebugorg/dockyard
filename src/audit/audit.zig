@@ -513,7 +513,7 @@ fn map(p: [:0]const u8) ?[]const u8 {
 }
 
 fn unmap(m: []const u8) void {
-    _ = c.munmap(@alignCast(@ptrCast(m.ptr)), m.len);
+    _ = c.munmap(@ptrCast(@alignCast(m.ptr)), m.len);
 }
 
 fn hexHash(text: []const u8) [64]u8 {
@@ -639,11 +639,11 @@ const FieldType = enum { str, int, bool, strs, sdict, nstr, json };
 
 fn fieldType(name: []const u8) FieldType {
     const map_ = .{
-        .{ "pid", .int },      .{ "ppid", .int },    .{ "code", .int },  .{ "ms", .int },
-        .{ "port", .int },     .{ "up", .int },      .{ "down", .int },  .{ "exit", .int },
-        .{ "size", .int },     .{ "sandbox", .bool }, .{ "ok", .bool },  .{ "argv", .strs },
-        .{ "targets", .strs }, .{ "answers", .strs }, .{ "input", .sdict }, .{ "before", .nstr },
-        .{ "after", .nstr },   .{ "diff", .nstr },   .{ "output", .json }, .{ "files", .json },
+        .{ "pid", .int },       .{ "ppid", .int },     .{ "code", .int },    .{ "ms", .int },
+        .{ "port", .int },      .{ "up", .int },       .{ "down", .int },    .{ "exit", .int },
+        .{ "size", .int },      .{ "sandbox", .bool }, .{ "ok", .bool },     .{ "argv", .strs },
+        .{ "targets", .strs },  .{ "answers", .strs }, .{ "input", .sdict }, .{ "before", .nstr },
+        .{ "after", .nstr },    .{ "diff", .nstr },    .{ "output", .json }, .{ "files", .json },
         .{ "response", .json },
     };
     inline for (map_) |m| if (std.mem.eql(u8, name, m[0])) return m[1];
