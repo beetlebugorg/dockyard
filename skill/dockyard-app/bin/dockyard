@@ -78,7 +78,8 @@ build)
     for t in $targets; do
         runner=$skill/runtimes/$t/ztk
         out=$dir/build/$t/$name
-        case $t in *windows) runner=$runner.exe out=$out.exe ;; esac
+        # A macOS program is an app folder with an ad hoc signature.
+        case $t in *windows) runner=$runner.exe out=$out.exe ;; *macos) out=$out.app ;; esac
         if [ ! -f "$runner" ]; then
             echo "skip $t: the skill has no ztk program for it" >&2
             continue
