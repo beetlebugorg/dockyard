@@ -10,7 +10,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 exe=${1:-$root/zig-out/bin/dockyard}
 work=$(mktemp -d)
 mkdir -p "$root/docs/dev/images"
-cp "$root/tools/mockup.tcl" "$root/src/theme.tcl" "$root/src/ui-icons.tcl" "$root/src/icon.tcl" "$work/"
+cp "$root/tools/mockup.tcl" "$root/src/ui/theme.tcl" "$root/src/ui/ui-icons.tcl" "$root/src/ui/icon.tcl" "$work/"
 for view in ${VIEWS:-main build first apps activity}; do
     echo "$view" > "$work/view.txt"
     for scheme in light dark; do
