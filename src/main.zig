@@ -189,7 +189,10 @@ pub fn main(init: std.process.Init) !void {
         platform = mac.?.platform();
     } else if (ztk.wayland_enabled) {
         if (init.environ_map.get("WAYLAND_DISPLAY") == null) fail(err, "dockyard: no Wayland display. Use --headless, or run in a Wayland session.\n", .{});
-        wl = ztk.wayland.Wayland.init(init.gpa) catch |e| fail(err, "dockyard: cannot use the Wayland display: {s}\n", .{@errorName(e)});
+        wl = ztk.wayland.Wayland.init(init.gpa, .{
+            .runtime_dir = init.environ_map.get("XDG_RUNTIME_DIR"),
+            .display = init.environ_map.get("WAYLAND_DISPLAY"),
+        }) catch |e| fail(err, "dockyard: cannot use the Wayland display: {s}\n", .{@errorName(e)});
         platform = wl.?.platform();
     } else fail(err, "dockyard: this build has no window backend. Use --headless.\n", .{});
     defer if (head) |h| h.deinit();
