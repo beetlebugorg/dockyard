@@ -135,7 +135,7 @@ const Run = struct {
         try apps.register(&r.it, std.testing.io, folder);
         if (comptime !on_win) {
             audit.reset();
-            try audit.register(&r.it, try std.fmt.allocPrintSentinel(a, "{s}.audit", .{folder}, 0));
+            try audit.register(&r.it, try std.fmt.allocPrintSentinel(a, "{s}.state/audit/p", .{folder}, 0));
         }
         try host.setVars(&r.it, .{ .project = folder, .agent = agent, .shell = test_shell, .path = test_path, .agent_name = "no-such-agent-program", .runner = exePath(), .headless = true });
         r.head = try ztk.headless.Headless.init(gpa);
