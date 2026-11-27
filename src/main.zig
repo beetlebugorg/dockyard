@@ -164,7 +164,7 @@ pub fn main(init: std.process.Init) !void {
         try host.setVars(&it, .{
             .project = folder,
             .agent = agent,
-            .shell = init.environ_map.get("SHELL") orelse "/bin/sh",
+            .shell = host.shellOf(init.environ_map),
             .path = path,
             .runner = try std.process.executablePathAlloc(io, arena),
             .headless = headless,
