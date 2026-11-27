@@ -286,6 +286,12 @@ proc ::dockyard::vm::ended {code} {
     ::dockyard::ended $code
 }
 
+# The first failure of a write of the audit log goes to the pane.
+proc ::dockyard::auditError {msg} {
+    .term write "\r\n\x1b\[2m\[the audit log has no write: $msg\]\x1b\[0m\r\n"
+}
+set ::dockyard::audit::on_error ::dockyard::auditError
+
 # The events of the guest go to the audit log (`audit.tcl`), as the
 # calls of the proxy and the file changes do.
 proc ::dockyard::vm::event {d} {

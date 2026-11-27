@@ -4,22 +4,25 @@
 # shares, and the rules. `dockyard::audit` (audit.zig) writes them.
 #
 # A failure to write a record does not stop the window. The first
-# failure goes to the terminal pane.
+# failure goes to the script in on_error, with the message. This file has
+# no UI code: the window sets on_error.
 
 namespace eval ::dockyard::audit {
     variable session ""
     variable turns 0
     variable failed 0
+    variable on_error {}
 }
 
 # Adds one record. `opts` are the options of `dockyard::audit log`.
 proc ::dockyard::audit::Log {kind data args} {
     variable failed
+    variable on_error
     # A build for Windows has no audit log yet.
     if {[info commands ::dockyard::audit] eq ""} return
     if {[catch {::dockyard::audit log $kind $data {*}$args} msg] && !$failed} {
         set failed 1
-        catch {.term write "\r\n\x1b\[2m\[the audit log has no write: $msg\]\x1b\[0m\r\n"}
+        if {$on_error ne ""} {catch {{*}$on_error $msg}}
     }
 }
 
