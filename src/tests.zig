@@ -13,6 +13,7 @@ const host = @import("host.zig");
 const test_options = @import("test_options");
 const mcp = @import("mcp.zig");
 const apps = @import("apps.zig");
+const audit = @import("audit.zig");
 
 const on_win = @import("builtin").os.tag == .windows;
 
@@ -64,10 +65,11 @@ test {
     _ = @import("sandbox.zig");
     _ = @import("guest_release.zig");
     _ = @import("monitor.zig");
+    _ = @import("audit.zig");
     _ = @import("sock.zig");
 }
 
-const window_script = @embedFile("icon.tcl") ++ @embedFile("ui-icons.tcl") ++ @embedFile("theme.tcl") ++ @embedFile("ui.tcl") ++ @embedFile("dockyard.tcl");
+const window_script = @embedFile("audit.tcl") ++ @embedFile("icon.tcl") ++ @embedFile("ui-icons.tcl") ++ @embedFile("theme.tcl") ++ @embedFile("ui.tcl") ++ @embedFile("dockyard.tcl");
 
 const Run = struct {
     it: ztcl.Interp = undefined,
@@ -131,6 +133,10 @@ const Run = struct {
         } else try Io.Dir.cwd().symLink(std.testing.io, full, dest, .{});
         apps.runtime_root = rt_root;
         try apps.register(&r.it, std.testing.io, folder);
+        if (comptime !on_win) {
+            audit.reset();
+            try audit.register(&r.it, try std.fmt.allocPrintSentinel(a, "{s}.audit", .{folder}, 0));
+        }
         try host.setVars(&r.it, .{ .project = folder, .agent = agent, .shell = test_shell, .path = test_path, .agent_name = "no-such-agent-program", .runner = exePath(), .headless = true });
         r.head = try ztk.headless.Headless.init(gpa);
         // The waits of the tests (`after 20` and `vwait`) wait for a child

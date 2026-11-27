@@ -1,51 +1,65 @@
 # The sandbox monitor (issue 15): `dockyard --monitor PROJECT` shows
-# the log of the sandbox of the project as a live timeline. With
-# `--tui` it writes the timeline to the terminal, with colors. The
-# dockyard window writes the log (`dockyard::monitor log`): the calls
-# of the egress proxy, allowed and blocked, the programs of the guest,
-# the changes of the project folder, and the shares. A rule (allow or
-# block a host) goes to the rules file, and the dockyard window gives
-# it to the proxy.
+# the audit log of the project (`docs/dev/audit.md`) as a live
+# timeline. With `--tui` it writes the timeline to the terminal, with
+# colors. The dockyard window writes the log (`dockyard::audit`): the
+# sessions and the turns of the agent program, its tool calls, the
+# programs of the guest, the calls of the egress proxy, the changes of
+# the project folder, and the shares. A rule (allow or block a host)
+# goes to the rules file, and the dockyard window gives it to the proxy.
 
 namespace eval ::dockyard::monitor {
-    variable offset 0
-    variable shown {net 1 exec 1 exit 0 hook 1 file 1 share 1 rule 1}
+    variable last 0
+    variable shown {net 1 dns 1 blocked 1 exec 1 exit 0 turn 1 tool 1 file 1 share 1 rule 1 session 1 build 1 note 1}
     variable filter ""
     variable blocked {}
     variable events {}
 }
 
-# The text of one event, and its tag: blocked, allowed, exec, hook, file, or note.
+proc ::dockyard::monitor::Get {d key} {
+    return [expr {[dict exists $d $key] ? [dict get $d $key] : ""}]
+}
+
+# The text of one record, and its tag: blocked, allowed, exec, hook, file, or note.
 proc ::dockyard::monitor::describe {e} {
     set t [clock format [expr {[dict get $e time] / 1000}] -format %H:%M:%S]
-    switch -- [dict get $e kind] {
+    set d [dict get $e data]
+    set k [dict get $e kind]
+    switch -- $k {
         net {
-            set r [dict get $e result]
-            set what "[dict get $e host]:[dict get $e port]"
+            set r [Get $d result]
+            set what "[Get $d host]:[Get $d port]"
             if {$r eq "allowed"} {
-                append what "  up [dict get $e up] B, down [dict get $e down] B, [dict get $e ms] ms"
+                append what "  up [Get $d up] B, down [Get $d down] B, [Get $d ms] ms"
             }
             return [list "$t  net   [format %-8s $r] $what" [expr {$r eq "allowed" ? "allowed" : "blocked"}]]
         }
-        exec {return [list "$t  exec  [dict get $e pid]  [join [dict get $e argv]]" exec]}
-        exit {return [list "$t  exit  [dict get $e pid]" note]}
-        hook {
-            # The event, the tool, and the first field of the tool input.
-            set what [dict get $e event]
-            if {[dict exists $e tool]} {append what " [dict get $e tool]"}
-            foreach f {path command pattern url prompt} {
-                if {[dict exists $e $f]} {
-                    append what "  [dict get $e $f]"
-                    break
-                }
-            }
-            return [list "$t  hook  $what" hook]
+        dns {
+            set r [Get $d result]
+            return [list "$t  dns   [format %-8s $r] [Get $d name] [Get $d type]" [expr {$r eq "allowed" ? "allowed" : "blocked"}]]
         }
-        file {return [list "$t  file  [dict get $e op] [dict get $e path]" file]}
-        share {return [list "$t  share [dict get $e op] [dict get $e name]" note]}
-        rule {return [list "$t  rule  [dict get $e rule] [dict get $e host]" note]}
+        blocked {return [list "$t  block [Get $d what] [Get $d target]" blocked]}
+        exec {return [list "$t  exec  [Get $d pid]  [join [Get $d argv]]" exec]}
+        exit {return [list "$t  exit  [Get $d pid]  [Get $d code]" note]}
+        turn {
+            set what "turn  [Get $d op]"
+            if {[Get $d op] eq "start"} {append what "  [string range [Get $d prompt] 0 200]"}
+            return [list "$t  $what" hook]
+        }
+        tool {
+            # The tool and the first field of the tool input.
+            set what "tool  [Get $d op] [Get $d tool]"
+            set in [Get $d input]
+            if {[dict size $in] > 0} {append what "  [lindex $in 1]"}
+            return [list "$t  $what" hook]
+        }
+        file {return [list "$t  file  [Get $d op] [Get $d path]" file]}
+        share {return [list "$t  share [Get $d op] [Get $d name]" note]}
+        rule {return [list "$t  rule  [Get $d op] [Get $d host]" note]}
+        session {return [list "$t  session [Get $d op] [join [Get $d argv]][Get $d exit]" note]}
+        build {return [list "$t  build [Get $d op] [Get $d targets] [Get $d ok]" note]}
+        note {return [list "$t  note  [Get $d text]" note]}
     }
-    return [list "$t  $e" note]
+    return [list "$t  $k $d" note]
 }
 
 proc ::dockyard::monitor::visible {e} {
@@ -57,15 +71,20 @@ proc ::dockyard::monitor::visible {e} {
     return 1
 }
 
-# Reads the new lines of the log every 250 ms.
+# Reads the new records of the log every 250 ms: at the start the last
+# 10,000, then the records after the last seq.
 proc ::dockyard::monitor::poll {} {
-    variable offset
+    variable last
     variable events
-    lassign [::dockyard::monitor read $offset] offset lines
-    foreach l $lines {
-        if {[catch {dict size $l}] || ![dict exists $l kind] || ![dict exists $l time]} continue
-        lappend events $l
-        show $l
+    if {$last == 0} {
+        set recs [::dockyard::audit query -last 10000]
+    } else {
+        set recs [::dockyard::audit query -after $last]
+    }
+    foreach r $recs {
+        set last [dict get $r seq]
+        lappend events $r
+        show $r
     }
     if {[llength $events] > 20000} {set events [lrange $events end-9999 end]}
     after 250 ::dockyard::monitor::poll
@@ -91,7 +110,7 @@ proc ::dockyard::monitor::gui {} {
     entry .bar.filter -textvariable ::dockyard::monitor::filter -width 30
     bind .bar.filter <KeyRelease> ::dockyard::monitor::redraw
     pack .bar.l .bar.filter -side left -padx {0 6}
-    foreach k {net exec exit hook file share} {
+    foreach k {net dns exec exit turn tool file share} {
         set ::dockyard::monitor::on($k) [dict get $shown $k]
         checkbutton .bar.$k -text $k -variable ::dockyard::monitor::on($k) \
             -command [list ::dockyard::monitor::toggle $k]
@@ -122,8 +141,8 @@ proc ::dockyard::monitor::gui {} {
 
 proc ::dockyard::monitor::guiShow {e} {
     variable blocked
-    if {[dict get $e kind] eq "net" && [dict get $e result] eq "blocked"} {
-        set h [dict get $e host]
+    if {[dict get $e kind] eq "net" && [Get [dict get $e data] result] eq "blocked"} {
+        set h [Get [dict get $e data] host]
         if {$h ni $blocked} {
             lappend blocked $h
             .tray.hosts insert end $h
@@ -164,7 +183,7 @@ proc ::dockyard::monitor::allowSelected {} {
 
 if {$::dockyard::tui} {
     proc ::dockyard::monitor::show {e} {tuiShow $e}
-    puts "dockyard monitor: [::dockyard::monitor path]"
+    puts "dockyard monitor: [::dockyard::audit path]"
 } else {
     proc ::dockyard::monitor::show {e} {guiShow $e}
     ::dockyard::monitor::gui

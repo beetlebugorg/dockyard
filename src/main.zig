@@ -33,7 +33,9 @@ const proxy = @import("proxy.zig");
 const sandbox = @import("sandbox.zig");
 const guest_release = @import("guest_release.zig");
 const monitor = @import("monitor.zig");
+const audit = @import("audit.zig");
 const monitor_script = @embedFile("monitor.tcl");
+const audit_script = @embedFile("audit.tcl");
 
 const window_script = @embedFile("ui-icons.tcl") ++ @embedFile("theme.tcl") ++ @embedFile("ui.tcl") ++ @embedFile("dockyard.tcl");
 /// The icon of the window and the logo of the bar (tools/icons.py).
@@ -47,6 +49,7 @@ const usage =
     \\  --sandbox-command LIST    the program of the pane in the guest (default: /bin/busybox sh -l)
     \\  --monitor                show the sandbox monitor of the project
     \\  --tui                    with --monitor: write the timeline to the terminal
+    \\  --audit-export           write the audit log of the project as JSON lines, with a check of the chain
     \\  --mcp                    serve the MCP bridge of the project on stdin and stdout
     \\  --headless               use the headless backend
     \\  --dark                   the dark color scheme
@@ -112,6 +115,7 @@ pub fn main(init: std.process.Init) !void {
     var sandbox_dir: ?[]const u8 = null;
     var monitor_mode = false;
     var tui = false;
+    var audit_export = false;
     var sandbox_argv: []const u8 = "/bin/busybox sh -l";
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -138,6 +142,8 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, a, "--tui")) {
             tui = true;
             headless = true;
+        } else if (std.mem.eql(u8, a, "--audit-export")) {
+            audit_export = true;
         } else if (std.mem.eql(u8, a, "--mcp")) {
             serve_mcp = true;
         } else if (std.mem.eql(u8, a, "--exit-after-frames") and has_value) {
@@ -166,6 +172,14 @@ pub fn main(init: std.process.Init) !void {
         init.environ_map.get("PWD") orelse "/";
     const folder = if (project) |p| try std.fs.path.resolve(arena, &.{ cwd, p }) else cwd;
     const runtime = init.environ_map.get("XDG_RUNTIME_DIR");
+    const audit_dir = audit.dirFor(arena, init.environ_map, folder) catch "";
+    if (audit_export) {
+        // The exit code is 1 when the chain is broken.
+        if (comptime @import("builtin").os.tag == .windows) fail(err, "dockyard: Windows has no audit log yet\n", .{});
+        const ok = audit.exportTo(arena, audit_dir, 1) catch |e| fail(err, "dockyard: no audit log in {s}: {s}\n", .{ audit_dir, @errorName(e) });
+        if (!ok) std.process.exit(1);
+        return;
+    }
     if (serve_mcp) {
         const sock = try host.controlPath(arena, runtime, folder);
         try mcp.main(init.gpa, io, sock);
@@ -205,6 +219,8 @@ pub fn main(init: std.process.Init) !void {
         it.vm_host.image_keys = guest_release.keys;
         it.vm_host.image_store = guest_release.store(arena, init.environ_map);
         try monitor.register(&it, try host.controlPath(arena, runtime, folder));
+        // Windows has no audit log yet: the writer uses POSIX files.
+        if (comptime @import("builtin").os.tag != .windows) if (audit_dir.len > 0) try audit.register(&it, audit_dir);
         try it.setVar("::dockyard::tui", .{ .str = if (tui) "1" else "0" });
     }
 
@@ -260,7 +276,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var status: u8 = 0;
-    const main_script = if (run_path != null) try std.fmt.allocPrint(arena, "source {{/{s}}}", .{run_name}) else if (monitor_mode) icon_script ++ monitor_script else sandbox.script ++ icon_script ++ window_script;
+    const main_script = if (run_path != null) try std.fmt.allocPrint(arena, "source {{/{s}}}", .{run_name}) else if (monitor_mode) icon_script ++ monitor_script else sandbox.script ++ audit_script ++ icon_script ++ window_script;
     // The timer of --exit-after-ms starts with the script.
     const script = if (exit_ms) |ms| try std.fmt.allocPrint(arena, "after {d} ::dockyard::stop\n{s}", .{ ms, main_script }) else main_script;
     if (ctl) |c| {

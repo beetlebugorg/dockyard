@@ -35,6 +35,7 @@ proc ::dockyard::start {} {
         set cmd [list $shell]
     }
     .term configure -inputcommand {} -command {}
+    ::dockyard::audit::start 0 $cmd
     .term configure -command $cmd
     ::dockyard::ui::paneState agent working
     ::dockyard::ui::status agent bolt accent "Agent: running" accent
@@ -42,6 +43,7 @@ proc ::dockyard::start {} {
 
 # The program ended. Return starts it again.
 proc ::dockyard::ended {status} {
+    ::dockyard::audit::end $status
     ::dockyard::ui::paneState agent ended
     ::dockyard::ui::status agent bolt muted "Agent: ended ($status)"
     .term write "\r\n\x1b\[2m\[the program ended: $status. Press Return to start it again.\]\x1b\[0m\r\n"
@@ -111,7 +113,7 @@ proc ::dockyard::preview::poll {} {
         set path [lindex $change 1]
         if {$path eq "/.git" || [string match /.git/* $path]} continue
         if {$path eq "/.dockyard" || [string match /.dockyard/* $path]} continue
-        if {[info exists ::dockyard::sandbox] && $::dockyard::sandbox ne ""} {::dockyard::vm::fileChange $change}
+        ::dockyard::vm::fileChange $change
         set changed 1
     }
     if {$changed} {
@@ -256,6 +258,7 @@ proc ::dockyard::vm::start {} {
         tick
     }
     lassign [.term size] cols rows
+    ::dockyard::audit::start 1 $::dockyard::sandbox_argv
     set cwd [expr {[catch {ztcl::vm exec $guest /bin/busybox test -d [::dockyard::sandbox::path $guest /work]} r] || [dict get $r exit] ? "/" : "/work"}]
     set session [::dockyard::sandbox::session $guest -argv $::dockyard::sandbox_argv -cwd $cwd -rows $rows -cols $cols \
         -env [list TERM=xterm-256color HOME=/root PATH=/tools/bin:/bin:/sbin:/usr/bin \
@@ -283,17 +286,16 @@ proc ::dockyard::vm::ended {code} {
     ::dockyard::ended $code
 }
 
-# The events of the guest go to the log of the monitor (issue 15,
-# `monitor.tcl`), as the calls of the proxy and the file changes do.
+# The events of the guest go to the audit log (`audit.tcl`), as the
+# calls of the proxy and the file changes do.
 proc ::dockyard::vm::event {d} {
     set k [dict get $d type]
     dict unset d type
-    log $k $d
+    ::dockyard::audit::guest $k $d
 }
 
 proc ::dockyard::vm::log {kind d} {
-    if {![dict exists $d time]} {dict set d time [clock milliseconds]}
-    catch {::dockyard::monitor log [dict merge [list kind $kind] $d]}
+    ::dockyard::audit::Log $kind $d
 }
 
 # Every 250 ms: the events of the proxy go to the log, and the rules of
@@ -301,7 +303,7 @@ proc ::dockyard::vm::log {kind d} {
 namespace eval ::dockyard::vm {variable rules {}}
 proc ::dockyard::vm::tick {} {
     variable rules
-    foreach e [::dockyard::proxy events] {log net $e}
+    foreach e [::dockyard::proxy events] {::dockyard::audit::net $e}
     set now [::dockyard::monitor rules]
     if {$now ne $rules} {
         set rules $now
@@ -310,19 +312,18 @@ proc ::dockyard::vm::tick {} {
             lassign $r kind host
             set allow [lsearch -all -inline -not -exact $allow $host]
             if {$kind eq "allow"} {lappend allow $host}
-            log rule [list rule $kind host $host]
+            log rule [list op $kind host $host]
         }
         ::dockyard::proxy allow $allow
     }
     after 250 ::dockyard::vm::tick
 }
 
+# Each change of the project folder goes to the audit log, with the
+# sandbox and without it.
 proc ::dockyard::vm::fileChange {change} {
-    variable guest
-    if {$guest eq ""} return
-    lassign $change op path
-    if {[string match /.dockyard* $path]} return
-    log file [list op $op path $path]
+    if {[string match /.dockyard* [lindex $change 1]]} return
+    ::dockyard::audit::change $change
 }
 
 # The sharing panel: a file of the project goes into /inbox of the
