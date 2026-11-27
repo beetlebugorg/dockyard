@@ -1,0 +1,95 @@
+#!/bin/sh
+# The dockyard CLI of the skill. It runs the ztk program of the skill
+# (runtimes/x86_64-linux/ztk, or aarch64-linux on arm64) on the headless
+# backend, and builds programs with `ztk bundle`.
+#
+#   dockyard new NAME            make the folder NAME with a main.tcl
+#   dockyard run DIR [SHOT.png]  run DIR/main.tcl, write a screenshot
+#   dockyard check DIR CHECK.tcl run DIR/main.tcl, then CHECK.tcl
+#   dockyard build DIR [TARGET ...|all]
+#                                write DIR/build/TARGET/NAME for each target
+set -eu
+skill=$(cd "$(dirname "$0")/.." && pwd)
+case $(uname -m) in
+    aarch64 | arm64) host=aarch64-linux ;;
+    *) host=x86_64-linux ;;
+esac
+ztk=$skill/runtimes/$host/ztk
+all="x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows"
+
+die() {
+    echo "dockyard: $*" >&2
+    exit 2
+}
+
+[ -x "$ztk" ] || die "the ztk program of $host is not in the skill ($ztk)"
+
+# The files of the app: main.tcl first, then the other files and
+# folders of DIR, without the hidden files, build/, and the screenshots.
+app_files() {
+    dir=$1
+    printf '%s\n' "$dir/main.tcl"
+    for f in "$dir"/*; do
+        n=$(basename "$f")
+        case $n in main.tcl | build | shot.png | '*') continue ;; esac
+        printf '%s\n' "$f"
+    done
+}
+
+cmd=${1:-}
+[ $# -gt 0 ] && shift
+case $cmd in
+new)
+    [ $# -eq 1 ] || die "usage: dockyard new NAME"
+    [ -e "$1" ] && die "$1 exists"
+    mkdir -p "$1"
+    cat >"$1/main.tcl" <<'TCL'
+wm title . "New app"
+ttk::label .hello -text "Hello" -padding 16
+pack .hello
+TCL
+    echo "$1/main.tcl"
+    ;;
+run)
+    [ $# -ge 1 ] || die "usage: dockyard run DIR [SHOT.png]"
+    shot=${2:-$1/shot.png}
+    full=$(cd "$(dirname "$shot")" && pwd)/$(basename "$shot")
+    # Two frames: the layout and the draw. A script error goes to stderr,
+    # and the exit status is not 0.
+    (cd "$1" && "$ztk" --headless --exit-after-frames 2 --screenshot "$full" main.tcl)
+    echo "$shot"
+    ;;
+check)
+    [ $# -eq 2 ] || die "usage: dockyard check DIR CHECK.tcl"
+    tmp=$(mktemp)
+    trap 'rm -f "$tmp"' EXIT
+    cat "$1/main.tcl" "$2" >"$tmp"
+    cp "$tmp" "$1/.check.tcl"
+    trap 'rm -f "$tmp" "$1/.check.tcl"' EXIT
+    (cd "$1" && "$ztk" --headless .check.tcl)
+    ;;
+build)
+    [ $# -ge 1 ] || die "usage: dockyard build DIR [TARGET ...|all]"
+    dir=$(cd "$1" && pwd)
+    shift
+    targets=${*:-all}
+    [ "$targets" = all ] && targets=$all
+    name=$(basename "$dir")
+    for t in $targets; do
+        runner=$skill/runtimes/$t/ztk
+        out=$dir/build/$t/$name
+        case $t in *windows) runner=$runner.exe out=$out.exe ;; esac
+        if [ ! -f "$runner" ]; then
+            echo "skip $t: the skill has no ztk program for it" >&2
+            continue
+        fi
+        mkdir -p "$dir/build/$t"
+        # shellcheck disable=SC2046
+        "$ztk" bundle -o "$out" --target "$t" --runner "$runner" --allow file,channels,clock --name "$name" $(app_files "$dir")
+    done
+    ;;
+*)
+    sed -n '5,10p' "$0" | sed 's/^# //'
+    exit 2
+    ;;
+esac

@@ -41,3 +41,23 @@ jobs:
         run: |
           ulimit -v 6000000
           zig build test
+
+  skill:
+    name: Skill (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      # The Linux programs of ztk compile their Vulkan shaders with glslc.
+      - name: Install glslc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y glslc
+      # The skill zip has the ztk programs of all the targets. Its size
+      # must stay under the upload limit (tools/skill.sh checks it).
+      - name: Build the skill zip
+        run: tools/skill.sh
+      - name: Test the skill as a sandbox uses it
+        run: tools/skill-test.sh

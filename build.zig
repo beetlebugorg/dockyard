@@ -33,6 +33,7 @@ pub fn build(b: *std.Build) void {
     // The skill (tools/skill.sh) needs a static Linux program also for
     // the target of the build.
     const static_runtimes = b.option(bool, "static-runtimes", "Build the ztk program of the target of this build as for another target: static on Linux") orelse false;
+    const runtimes_step = b.step("runtimes", "Install only the ztk programs of -Druntimes");
     var names: std.ArrayList([]const u8) = .empty;
     if (std.mem.eql(u8, runtimes, "all")) {
         names.appendSlice(b.allocator, &all_targets) catch @panic("OOM");
@@ -55,6 +56,7 @@ pub fn build(b: *std.Build) void {
             b.dependency("ztk", .{ .target = rt_target, .optimize = .ReleaseFast, .strip = true });
         const install = b.addInstallArtifact(rt_dep.artifact("ztk"), .{ .dest_dir = .{ .override = .{ .custom = b.fmt("lib/ztk/runtime/{s}", .{n}) } } });
         b.getInstallStep().dependOn(&install.step);
+        runtimes_step.dependOn(&install.step);
     }
 
     const run = b.addRunArtifact(exe);

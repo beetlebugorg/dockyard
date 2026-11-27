@@ -22,6 +22,7 @@ This page has the state of each step of the build order (section 9 of `spec.md`)
 | Build button | dockyard, ztk | Done: `src/apps.zig` (`dockyard::build::run` calls `ztk.bundle.run`) and the bar of `dockyard.tcl`. `zig build -Druntimes=...` puts the ztk program of each target in `zig-out/lib/ztk/runtime/TARGET/`. ztk PR 229 fixes the build for aarch64-windows. |
 | App list | dockyard | First form done: the Apps window lists the apps next to the project with their programs, with Launch and Open in dockyard. |
 | History | dockyard | Not started. |
+| Claude skill (issue 16) | dockyard | `skill/dockyard-app/` (SKILL.md and the `dockyard` CLI: new, run, check, build), `tools/skill.sh` (the zip with the ztk programs of all the targets, and the size check), `tools/skill-test.sh`, and the CI job `Skill (Linux)`. Not published: a release of the zip waits for the user. |
 
 ## Next steps
 
