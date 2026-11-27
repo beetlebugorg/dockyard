@@ -37,6 +37,10 @@ Each connection and each blocked attempt is an event: the host, the port, the re
 
 The proxy sees the host names of HTTPS connections, and not the content. The bodies of the requests stay encrypted.
 
+## Hooks
+
+dockyard writes the hook settings of Claude Code in the home folder of the guest. Each hook of Claude Code, such as a tool call with its command or its path, goes through the helper to the log, and the [monitor](monitor.md) shows it.
+
 ## Shares
 
 In a sandbox run the bar has a Shares button. The panel moves single files in and out of the guest:
