@@ -10,6 +10,10 @@ Read these pages before you work:
 
 Put plans, task lists, reports, and limits in `docs/dev/`.
 
+## Where the code goes
+
+[docs/dev/architecture.md](docs/dev/architecture.md) has the map of `src/` (app, ui, sandbox, audit, guest), the rules between the modules, and the folder for each kind of new feature. Read it before you add a file.
+
 The CPU limit of ztcl is the compute limit, and it counts compute units. Use these terms in code, docs, and messages.
 
 ## Commands

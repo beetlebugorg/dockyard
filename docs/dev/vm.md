@@ -18,7 +18,7 @@ Date: 2026-11-26. State: plan. This page has the steps of issues 13 and 15. Each
 | The guest agent (`exec`, `mount`, and a PTY over vsock) | ztcl | ztcl `docs/dev/vm.md` step 4. The terminal pane needs a PTY in the guest, so the agent needs an `op` for a PTY session: a vsock connection with the bytes of the PTY, and a resize frame. |
 | The base image: the kernel and BusyBox | dockyard `os/` | Not started. |
 | The disks of the pane: node and git, and Zig | dockyard `os/tools` | The disk, the manifest, and the test signature in CI (`.github/workflows/guest.yml`). The mount in the guest and the trust of the key in the app wait for ztcl PRs 435 and 455. |
-| The egress proxy with an allow list | dockyard `src/proxy.zig` | Step 1 below. |
+| The egress proxy with an allow list | dockyard `src/sandbox/proxy.zig` | Step 1 below. |
 | The terminal pane in the VM | dockyard | Step 4 below. First form on Linux KVM: the helper of the guest (`docs/dev/guest.md`) gives the PTY, the proxy port, and the events, so the agent of ztcl needs no PTY op. |
 | KVM and HCS in `ztcl::vm` | ztcl | Not started. Linux and Windows wait for them. |
 
@@ -45,7 +45,7 @@ A guest program can reach: the project folder (virtio-fs, read-write), the files
 
 ## Steps
 
-1. The egress proxy in Zig (`src/proxy.zig`), as Tcl commands `dockyard::proxy start|stop|allow|events`, with tests on Linux (a local server, an allowed connection, and a blocked attempt). It works with a host program today through `HTTPS_PROXY`, before the VM exists.
+1. The egress proxy in Zig (`src/sandbox/proxy.zig`), as Tcl commands `dockyard::proxy start|stop|allow|events`, with tests on Linux (a local server, an allowed connection, and a blocked attempt). It works with a host program today through `HTTPS_PROXY`, before the VM exists.
 2. `os/`: the Buildroot tree, the kernel fragment, and a CI job that builds the base image for aarch64 and x86_64. Measure the size and the boot time on a Mac.
 3. The tools disk and the release workflow with the manifest and the signature. The download and the update panel in the app.
 4. `dockyard::vm` (Zig): the machine of a project with `ztcl::vm`, the project share, the proxy relay, and a PTY session for `ztk::terminal`. The terminal pane gets a mode `--sandbox vm` on macOS. A Mac session checks it.
@@ -83,6 +83,6 @@ The guest of ztcl has BusyBox and the agent of ztcl only. The pane needs node an
   npm installs one native binary package for the platform (402,326,322 bytes of the total), and the postinstall script runs `node install.cjs`. The place of this install in the guest is open (questions.md): a tmpfs install downloads it at each boot.
 - The times (x86-64 KVM, 256 MB, the KVM release test, two runs of each release, on a host with a load of about 20 on 8 cores, 2026-11-27): the uptime of the guest at the first command of the pane is 0.19 to 0.32 s with the Claude Code disk, and 0.21 to 0.60 s with both disks. The whole test (the install of the release with its SHA-256 checks, the boot, the commands, and the delete) is 8.7 to 9.7 s with the Claude Code disk, and 21.5 to 41.5 s with both disks. The first `zig version` and the larger install are the difference.
 - Zig on the build disk has the libc headers and sources for Linux and WASI only. The pane builds and tests for Linux, and the Build of the app makes the other platforms on the host. `zig build-exe` for `x86_64-linux-musl` and `aarch64-linux-gnu` works in a chroot of the disk, and `x86_64-windows` gives `DllImportLibraryNotFound`. git has `git-remote-http` and no programs for other transports or for servers. The disks have no `openssh-client`, no `doc` folder of Zig, and no man pages.
-- `dockyard --sandbox DIR` with the release of `manifest.sh` in `DIR` installs the release and boots it with `create -image` (`src/guest_release.zig`). The KVM test `the pane runs from the disks of a signed release` runs node and git in the chroot, and Zig with the build disk, with `DOCKYARD_GUEST_RELEASE` set to a release folder. It prints the uptime of the guest at the first command and the time of the whole test.
+- `dockyard --sandbox DIR` with the release of `manifest.sh` in `DIR` installs the release and boots it with `create -image` (`src/sandbox/guest_release.zig`). The KVM test `the pane runs from the disks of a signed release` runs node and git in the chroot, and Zig with the build disk, with `DOCKYARD_GUEST_RELEASE` set to a release folder. It prints the uptime of the guest at the first command and the time of the whole test.
 - node in the guest: node runs with its JIT. The JIT of V8 needs `madvise`, and the guest kernel has `CONFIG_ADVISE_SYSCALLS` since ztcl-guest-kernel run 46020516028. With an older kernel, node stops with `Check failed: 0 == ret`.
 - Next: the update panel of issue 13, and a release key of dockyard. The copy of the helper over `exec` stays for a guest without `-image`.

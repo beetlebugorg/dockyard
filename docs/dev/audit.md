@@ -2,7 +2,7 @@
 
 This page is the plan and the schema of the audit log. The Activity view of dockyard shows it. The log records each action of the agent program in each session: with the sandbox and without it. The monitor log of `monitor.md` is the first form of it. The audit log replaces it.
 
-State (2026-11-27): `src/audit.zig` writes the log, the chain, and the index, and `src/audit.tcl` makes the records of the window: the sessions, the turns and the tool calls of the hooks, the programs of the guest, the calls of the proxy, the changes of the file watcher, the shares, and the rules. The monitor (`monitor.md`) reads it. Steps 3 to 7 of the order below are open. Windows has no audit log yet: the writer uses POSIX files.
+State (2026-11-27): `src/audit/audit.zig` writes the log, the chain, and the index, and `src/audit/audit.tcl` makes the records of the window: the sessions, the turns and the tool calls of the hooks, the programs of the guest, the calls of the proxy, the changes of the file watcher, the shares, and the rules. The monitor (`monitor.md`) reads it. Steps 3 to 7 of the order below are open. Windows has no audit log yet: the writer uses POSIX files.
 
 ## Requirements
 
@@ -85,7 +85,7 @@ Record N is at byte 64 + 40 × (N - 1). A filter by kind, source, or time reads 
 
 ## The Tcl commands
 
-`src/audit.zig` registers `dockyard::audit` in the dockyard window and in the monitor:
+`src/audit/audit.zig` registers `dockyard::audit` in the dockyard window and in the monitor:
 
 | Command | Result |
 |---|---|
@@ -110,7 +110,7 @@ FILTERS: `-kind LIST`, `-source LIST`, `-session ID`, `-turn ID`, `-call ID`, `-
 ## Order of the work
 
 1. This schema, and the agreement of the Activity view (questions.md).
-2. The writer in `src/audit.zig`: JSON lines, the chain, the index. The monitor window reads the new format. (Done.)
+2. The writer in `src/audit/audit.zig`: JSON lines, the chain, the index. The monitor window reads the new format. (Done.)
 3. The ids of turn and tool call from the hooks (`tool_use_id`, `session_id`), and the hooks `PreToolUse` with the tool input.
 4. The output of `exit`: the helper sends the bytes of each program that it starts. A program that the agent program starts has its output in the PTY or in the tool result of the hook.
 5. `file` with hashes and diffs, from the watcher and the content store.
