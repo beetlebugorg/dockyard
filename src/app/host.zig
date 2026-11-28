@@ -309,8 +309,12 @@ test "the control path depends on the project folder" {
     defer arena.deinit();
     const a = arena.allocator();
     // A runtime folder that is not a private folder of the user is not used.
-    const base = if (std.c.getenv("TMPDIR")) |t| std.mem.sliceTo(t, 0) else "/tmp";
-    const home = try std.fmt.allocPrint(a, "{s}/dockyard-test-home-{d}", .{ base, std.c.getpid() });
+    // Windows has no libc here, and its control path does not use the
+    // home folder: the folder of the test is a name in the current folder.
+    const home = if (comptime on_win) "dockyard-test-home" else try std.fmt.allocPrint(a, "{s}/dockyard-test-home-{d}", .{
+        if (std.c.getenv("TMPDIR")) |t| std.mem.sliceTo(t, 0) else "/tmp",
+        std.c.getpid(),
+    });
     defer std.Io.Dir.cwd().deleteTree(std.testing.io, home) catch {};
     const one = try controlPath(a, .{ .runtime = "/tmp", .home = home }, "/home/u/app");
     // The socket is not in /tmp itself. The home folder of the test is
