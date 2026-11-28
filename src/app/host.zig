@@ -311,8 +311,12 @@ test "the control path depends on the project folder" {
     // A runtime folder that is not a private folder of the user is not used.
     const base = if (std.c.getenv("TMPDIR")) |t| std.mem.sliceTo(t, 0) else "/tmp";
     const home = try std.fmt.allocPrint(a, "{s}/dockyard-test-home-{d}", .{ base, std.c.getpid() });
+    defer std.Io.Dir.cwd().deleteTree(std.testing.io, home) catch {};
     const one = try controlPath(a, .{ .runtime = "/tmp", .home = home }, "/home/u/app");
-    try std.testing.expect(!std.mem.startsWith(u8, one, "/tmp/dockyard-"));
+    // The socket is not in /tmp itself. The home folder of the test is
+    // below /tmp, so a check of the start of the path is not enough.
+    try std.testing.expect(!std.mem.eql(u8, std.fs.path.dirname(one).?, "/tmp"));
+    if (comptime !on_win) try std.testing.expect(std.mem.startsWith(u8, one, home));
     try std.testing.expect(!std.mem.eql(u8, one, try controlPath(a, .{ .runtime = "/tmp", .home = home }, "/home/u/other")));
     const plain = try controlPath(a, .{ .home = home }, "/x");
     if (comptime on_win) {
