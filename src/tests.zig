@@ -475,3 +475,27 @@ test "the Activity view groups the records by turn and filters them" {
     _ = try r.eval("set ::dockyard::activity::query {}; set ::dockyard::activity::folded 1; ::dockyard::activity::refilter");
     try std.testing.expectEqualStrings("{turn 1}", try r.eval("set ::dockyard::activity::rows"));
 }
+
+test "an idle window draws no frames in each view" {
+    var r: Run = .{ .arena = .init(std.testing.allocator) };
+    try r.start(test_shell, "label .l -text idle\npack .l\n");
+    defer r.stop();
+    // The timers of the window keep running: the preview poll (33 ms),
+    // the audit poll (250 ms), and the file watcher (100 ms). With no
+    // change, none of them makes a widget dirty, so the window draws no
+    // frame. A view draws frames for its first data, so each view gets
+    // up to 15 s to reach a full second with no frame.
+    for ([_][]const u8{ "workspace", "activity", "apps" }) |view| {
+        var buf: [64]u8 = undefined;
+        _ = try r.eval(try std.fmt.bufPrint(&buf, "::dockyard::ui::go {s}", .{view}));
+        var idle = false;
+        var k: usize = 0;
+        while (k < 15 and !idle) : (k += 1) {
+            const before = r.app.frames;
+            _ = try r.eval("after 1000 {set ::tick 1}; vwait ::tick");
+            idle = r.app.frames == before;
+        }
+        if (!idle) std.debug.print("the view {s} draws frames with no change\n", .{view});
+        try std.testing.expect(idle);
+    }
+}
