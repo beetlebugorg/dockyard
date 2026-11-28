@@ -292,6 +292,8 @@ pub fn shellOf(map: *const std.process.Environ.Map) []const u8 {
 
 /// Sets the variables of `dockyard.tcl`.
 pub fn setVars(it: *ztcl.Interp, s: Setup) !void {
+    // The namespace of the variables: ztcl fails a set in a namespace that does not exist, as Tcl does.
+    _ = try it.eval("namespace eval ::dockyard {}");
     try it.setVar("::dockyard::project", .{ .str = s.project });
     try it.setVar("::dockyard::agent", .{ .str = s.agent orelse "" });
     try it.setVar("::dockyard::agent_name", .{ .str = s.agent_name });

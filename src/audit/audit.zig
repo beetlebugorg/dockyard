@@ -1036,7 +1036,7 @@ test "the audit log chains, indexes, and filters the records" {
     // terminal view of monitor.tcl gives each record a line.
     try it.allow(@backingInt(ztcl.interp.Capability.event) | @backingInt(ztcl.interp.Capability.clock));
     it.event_host = .{ .now = testTicks, .sleep = testSleep };
-    _ = try it.eval("set ::dockyard::project /p; set ::dockyard::tui 1");
+    _ = try it.eval("namespace eval ::dockyard {}; set ::dockyard::project /p; set ::dockyard::tui 1");
     _ = try it.eval(@embedFile("audit.tcl"));
     _ = it.eval(
         \\::dockyard::audit::start 1 {claude}

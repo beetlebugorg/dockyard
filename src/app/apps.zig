@@ -55,6 +55,11 @@ fn programName(a: std.mem.Allocator, target: []const u8, name: []const u8) ![]co
 /// `lib/ztk/runtime` next to the folder of this program.
 pub var runtime_root: ?[]const u8 = null;
 
+/// The environment of the process for `ztk bundle`, which reads the
+/// folders of the build tools from it. `main` sets it; with null (the
+/// tests), the bundle gets an empty environment.
+pub var environ: ?*const std.process.Environ.Map = null;
+
 /// The path of the ztk program of a target.
 fn runtimePath(a: std.mem.Allocator, target: []const u8) ![]const u8 {
     const root = runtime_root orelse try std.fs.path.join(a, &.{ try std.process.executableDirPathAlloc(the_io, a), "..", "lib", "ztk", "runtime" });
@@ -155,7 +160,8 @@ fn build(a: std.mem.Allocator, target: []const u8) !BuildResult {
     }
     for (try appFiles(a, project)) |f| try args.append(a, try a.dupeSentinel(u8, f, 0));
     var log: Io.Writer.Allocating = .init(a);
-    const status = try ztk.bundle.run(the_io, a, args.items, &log.writer);
+    var empty: std.process.Environ.Map = .init(a);
+    const status = try ztk.bundle.run(the_io, a, environ orelse &empty, args.items, &log.writer);
     return .{ .status = status, .log = log.written(), .path = try std.fmt.allocPrint(a, "/build/{s}/{s}", .{ target, file }) };
 }
 
