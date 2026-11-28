@@ -17,6 +17,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = imports,
     });
+    // The version of dockyard, from build.zig.zon: the crash reports and
+    // the MCP server give it.
+    const opts = b.addOptions();
+    opts.addOption([]const u8, "version", @import("build.zig.zon").version);
+    root.addOptions("build_options", opts);
     // LLVM and LLD link the system start files, as in the build of ztk.
     const exe = b.addExecutable(.{ .name = "dockyard", .root_module = root, .use_llvm = true, .use_lld = use_lld });
     b.installArtifact(exe);
@@ -102,6 +107,7 @@ pub fn build(b: *std.Build) void {
     }) });
     test_opts.addOptionPath("guest_helper", host_guest.getEmittedBin());
     test_module.addOptions("test_options", test_opts);
+    test_module.addOptions("build_options", opts);
     const tests = b.addTest(.{ .root_module = test_module, .use_llvm = true, .use_lld = use_lld });
     const run_tests = b.addRunArtifact(tests);
     run_tests.step.dependOn(b.getInstallStep());
