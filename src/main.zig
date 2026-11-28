@@ -215,6 +215,7 @@ pub fn main(init: std.process.Init) !void {
         try host.allowPreview(&it, std.fs.path.dirname(f) orelse "/");
     } else {
         try host.allow(&it, folder, env);
+        apps.environ = init.environ_map;
         try apps.register(&it, io, folder);
         try proxy.register(&it);
         try host.setVars(&it, .{
@@ -226,6 +227,7 @@ pub fn main(init: std.process.Init) !void {
             .headless = headless,
             .dark = dark,
         });
+        _ = try it.eval("namespace eval ::dockyard {}");
         try it.setVar("::dockyard::view", .{ .str = view });
         try it.setVar("::dockyard::audit_import", .{ .str = audit_import });
         const sandbox_abs = if (sandbox_dir) |d| try std.fs.path.resolve(arena, &.{ cwd, d }) else null;
@@ -240,6 +242,7 @@ pub fn main(init: std.process.Init) !void {
         try monitor.register(&it, try host.controlPath(arena, host.Dirs.fromMap(init.environ_map), folder));
         // Windows has no audit log yet: the writer uses POSIX files.
         if (comptime @import("builtin").os.tag != .windows) if (audit_dir.len > 0) try audit.register(&it, audit_dir);
+        _ = try it.eval("namespace eval ::dockyard {}");
         try it.setVar("::dockyard::tui", .{ .str = if (tui) "1" else "0" });
     }
 

@@ -5,10 +5,13 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const ztk_dep = b.dependency("ztk", .{ .target = target, .optimize = optimize });
-    const ztcl_dep = ztk_dep.builder.dependency("ztcl", .{ .target = target, .optimize = optimize });
+    const ztk_mod = ztk_dep.module("ztk");
+    // The ztcl module of ztk: ztk gives ztcl its own options (`drop`), so a
+    // new dependency on ztcl here makes a second module of the same files.
+    const ztcl_mod = ztk_mod.import_table.get("ztcl") orelse @panic("ztk imports no ztcl module");
     const imports: []const std.Build.Module.Import = &.{
-        .{ .name = "ztk", .module = ztk_dep.module("ztk") },
-        .{ .name = "ztcl", .module = ztcl_dep.module("ztcl") },
+        .{ .name = "ztk", .module = ztk_mod },
+        .{ .name = "ztcl", .module = ztcl_mod },
     };
     const use_lld = target.result.ofmt != .macho;
     const root = b.createModule(.{

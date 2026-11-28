@@ -77,6 +77,8 @@ pub fn prepare(a: std.mem.Allocator, io: std.Io, project: []const u8, dir: []con
 
 pub fn setVars(it: *ztcl.Interp, r: ?Release) !void {
     var buf: [24]u8 = undefined;
+    // The namespace of the variables: ztcl fails a set in a namespace that does not exist, as Tcl does.
+    _ = try it.eval("namespace eval ::dockyard {}");
     try it.setVar("::dockyard::sandbox_image", .{ .str = if (r) |x| x.name else "" });
     try it.setVar("::dockyard::sandbox_counter", .{ .str = if (r) |x| try std.fmt.bufPrint(&buf, "{d}", .{x.counter}) else "" });
 }

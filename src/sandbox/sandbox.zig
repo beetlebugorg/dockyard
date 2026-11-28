@@ -60,6 +60,8 @@ pub fn prepare(a: std.mem.Allocator, io: Io, project: []const u8, dir: []const u
 }
 
 pub fn setVars(it: *ztcl.Interp, g: ?Guest, argv: []const u8, allow: []const u8) !void {
+    // The namespace of the variables: ztcl fails a set in a namespace that does not exist, as Tcl does.
+    _ = try it.eval("namespace eval ::dockyard {}");
     try it.setVar("::dockyard::sandbox", .{ .str = if (g != null) jail_dir else "" });
     try it.setVar("::dockyard::sandbox_kernel", .{ .str = if (g) |x| x.kernel else "" });
     try it.setVar("::dockyard::sandbox_argv", .{ .str = argv });

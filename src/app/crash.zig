@@ -71,6 +71,7 @@ pub fn install(arena: std.mem.Allocator, io: Io, env: *const std.process.Environ
     }
     const last = prune(arena, io, dir);
     if (it) |interp| {
+        _ = interp.eval("namespace eval ::dockyard::crash {}") catch {};
         interp.setVar("::dockyard::crash::last", .{ .str = last orelse "" }) catch {};
         interp.register("::dockyard::crash::open", cmdOpen) catch {};
     }

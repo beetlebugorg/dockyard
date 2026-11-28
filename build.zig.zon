@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .ztk = .{
-            .url = "git+https://github.com/beetlebugorg/ztk#31af992759944de373c46b4b96e07c5d0b125614",
-            .hash = "ztk-0.2.0-beta-pPTF2DxZUgC2z60gPx72clYhUBqeCvLgfzPB2Ou0neIE",
+            .url = "git+https://github.com/beetlebugorg/ztk#dd1046663dd6b29ca452547b5cf25f00027354d8",
+            .hash = "ztk-1.0.0-beta.1-pPTF2G4wVADy5CJyXdQMxvFs2EamImrt5xD2d3POyNGq",
         },
     },
     .paths = .{ "build.zig", "build.zig.zon", "src" },
