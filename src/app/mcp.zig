@@ -86,7 +86,7 @@ pub fn handle(a: std.mem.Allocator, socket_path: [:0]const u8, line: []const u8)
         return success(a, id, .{
             .protocolVersion = version,
             .capabilities = .{ .tools = .{ .listChanged = false } },
-            .serverInfo = .{ .name = server_name, .version = "0.1.0" },
+            .serverInfo = .{ .name = server_name, .version = @import("build_options").version },
             .instructions = instructions,
         });
     }

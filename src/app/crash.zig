@@ -21,7 +21,7 @@ const builtin = @import("builtin");
 const ztcl = @import("ztcl");
 const Io = std.Io;
 
-pub const version = "0.1.0";
+pub const version: []const u8 = @import("build_options").version;
 const keep = 20;
 const on_posix = builtin.os.tag != .windows;
 

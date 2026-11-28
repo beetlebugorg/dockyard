@@ -1,7 +1,7 @@
 .{
     .name = .dockyard,
     .fingerprint = 0x240b86b880fe647b,
-    .version = "0.1.0",
+    .version = "1.0.0-beta.1",
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .ztk = .{
